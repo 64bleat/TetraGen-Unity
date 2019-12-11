@@ -1,0 +1,13 @@
+fileFormatVersion: 2
+guid: 282e5b4ac606c214f97b1b114bb71f23
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - tetraGenChunk: {fileID: 2033029821349305897, guid: 5edffb4f1996c7b438968ccdd3cc784b,
+      type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

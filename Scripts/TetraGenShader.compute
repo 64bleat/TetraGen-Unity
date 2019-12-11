@@ -1,0 +1,388 @@
+﻿/*
+Distance Calculations
+		
+		Distance, or weight, calculations generate a 3D array of float values,
+	that correspond to how far away the closest surface will be. When a surface
+	lies between two of these points, the isosurface algorithm will place
+	the surface there. The algorithm is designed to have an expandable set
+	of shapes and blend modes.
+
+Marching Tetrahedra Algoritm
+
+		Each cubic cell is divided into 6 tetrahedra.
+	Of those tetrahedra, 0 to 2 triangles may be generated.
+	Of those triangles, 0 to 6 total vertices may be generated.
+	One cell will have a maximum of 36 vertices and each one
+	must have a spot in the array, trianglesToAdd. It is not very space-efficient,
+	but it will be condensed before being made into meshes.
+
+		The tetrahedra are arranged within the cube to be
+	easily generated using bit-shifting and looping tricks.
+
+		After the 3D distance array is generated from ShapeData in
+	the CalculateWeights kernel, the MarchingTetrahedra kernel follows
+	the Marching Tetrahedra algorithm and stores vertex data to be made
+	into meshes by the CPU portion of the script, TetraGen.
+
+		Each cell lies between the points in the distance array, so
+	all dimensions are 1 smaller than the distance array.
+
+indexOffset[]
+
+		Each tetrahedra is defined by four points and thier offset from
+	the local origin point (0,0,0). Each tetrahedra has a unique point,
+	identified by its spot in the indexOffset array and the spot directly
+	above it. the first three bits form a 1-bit 3D offset vector.
+	These vertices orbit the (0,0,0)->(1,1,1) axis counter-clockwise.
+
+	point[0] (0,0,0) The lower point shared between all Tetrahedra
+	point[1] (indexOffset[t])
+	point[2] (indexOffset[(t + 1) % 6])
+	point[3] (1,1,1) the upper point shared between all tetrahedra
+
+Slide factor
+
+		Each edge of the tetrahedra has the distance associated with each of their
+	two vertices normalized into a "slide factor." Essentially, if the slide factor
+	is between 0 and 1, the isosurface runs through that edge.
+
+checkMask
+
+		checkMask condenses the slide factors into a single int to be used
+	in a switch. This allows every edge case to be quickly identified.
+*/
+
+#pragma kernel MarchingTetrahedra
+#pragma kernel CalculateWeights
+
+// imports
+struct ShapeData
+{
+	uint shapeType;
+	uint blendMode;
+	float blendFactor;
+	float bevelRadius;
+	float4x4 worldToLocal;
+	float4x4 localToWorld;
+};
+
+// exports
+struct TriangleData
+{
+	float3 position;
+	float3 normal;
+	float3 color;
+	int index;
+};
+
+//buffers (not shared between kernels)
+StructuredBuffer<ShapeData> shapes;
+RWStructuredBuffer<float> weights;
+RWStructuredBuffer<TriangleData> trianglesToAdd;
+
+// global variables (shared between kernels)
+float4x4 gridToWorldMatrix;
+uint shapeCount;
+int xBound, yBound, zBound;
+int flipNormal = -1;
+float3 cellBounds;
+
+// The original sign function returns 0, when n == 0.
+// I need it to return -1, when n == 0.
+int zsign(float n)
+{
+	return n <= 0 ? -1 : 1;
+}
+
+[numthreads(1,1,1)]
+void MarchingTetrahedra (uint3 id : SV_DispatchThreadID)
+{
+	int indexOffset[6];
+						//xyz
+	indexOffset[0] = 1; //001
+	indexOffset[1] = 3; //011
+	indexOffset[2] = 2; //010
+	indexOffset[3] = 6; //110
+	indexOffset[4] = 4; //100
+	indexOffset[5] = 5; //101
+
+	for(uint t = 0; t < 6; t++)
+	{
+		float3 point0, point1, point2, point3;
+		float  weight0, weight1, weight2, weight3;
+		float3 tPoints[6];
+		float f01, f02, f03, f12, f23, f31;
+		uint mask1, mask2, checkMask;
+		int tCount;
+
+		//index mask.
+		mask1 = indexOffset[t];
+		mask2 = indexOffset[(t + 1) % 6];
+
+		//Tetra point positions
+		point0 = float3(cellBounds.x * id.x,
+						cellBounds.y * id.y,
+						cellBounds.z * id.z);
+		point1 = float3(cellBounds.x * (id.x + (mask1 >> 2 & 1)),
+						cellBounds.y * (id.y + (mask1 >> 1 & 1)),
+						cellBounds.z * (id.z + (mask1      & 1)));
+		point2 = float3(cellBounds.x * (id.x + (mask2 >> 2 & 1)),
+						cellBounds.y * (id.y + (mask2 >> 1 & 1)),
+						cellBounds.z * (id.z + (mask2      & 1)));
+		point3 = float3(cellBounds.x * (id.x + 1),
+						cellBounds.y * (id.y + 1),
+						cellBounds.z * (id.z + 1));
+			
+		//weights
+		weight0 = weights[id.x * yBound * zBound + 
+			              id.y * zBound +
+						  id.z];
+		weight1 = weights[(id.x + (mask1 >> 2 & 1)) * yBound * zBound +
+			              (id.y + (mask1 >> 1 & 1)) * zBound +
+					      (id.z + (mask1      & 1))];
+		weight2 = weights[(id.x + (mask2 >> 2 & 1)) * yBound * zBound +
+			              (id.y + (mask2 >> 1 & 1)) * zBound +
+					      (id.z + (mask2      & 1))];
+		weight3 = weights[(id.x + 1) * yBound * zBound +
+			              (id.y + 1) * zBound +
+						  (id.z + 1)];
+
+		//slide factors
+		f01 = weight0 == 0 ? 0 : weight1 == 0 ? 1 : weight0 / (weight0 - weight1); //1
+        f02 = weight0 == 0 ? 0 : weight2 == 0 ? 1 : weight0 / (weight0 - weight2); //2
+        f03 = weight0 == 0 ? 0 : weight3 == 0 ? 1 : weight0 / (weight0 - weight3); //3
+        f12 = weight1 == 0 ? 0 : weight2 == 0 ? 1 : weight1 / (weight1 - weight2); //4
+        f23 = weight2 == 0 ? 0 : weight3 == 0 ? 1 : weight2 / (weight2 - weight3); //5
+        f31 = weight3 == 0 ? 0 : weight1 == 0 ? 1 : weight3 / (weight3 - weight1); //6
+
+		checkMask = 0;
+        if (zsign(weight0) != zsign(weight1)) checkMask |= 1;
+        if (zsign(weight0) != zsign(weight2)) checkMask |= 2;
+        if (zsign(weight0) != zsign(weight3)) checkMask |= 4;
+        if (zsign(weight1) != zsign(weight2)) checkMask |= 8;
+        if (zsign(weight2) != zsign(weight3)) checkMask |= 16;
+        if (zsign(weight3) != zsign(weight1)) checkMask |= 32;
+
+		switch(checkMask)
+		{
+			case 7: //000111
+				tPoints[0] = lerp(point0, point1, f01);
+                tPoints[1] = lerp(point0, point2, f02);
+                tPoints[2] = lerp(point0, point3, f03);
+                tPoints[4] = (point1 - point0) * weight0;
+                tCount = 1;
+				break;
+			case 41: //101001
+				tPoints[0] = lerp(point0, point1, f01);
+                tPoints[1] = lerp(point1, point2, f12);
+                tPoints[2] = lerp(point3, point1, f31);
+                tPoints[4] = (point0 - point1) * weight1;
+                tCount = 1;
+                break;
+			case 26: //011010
+				tPoints[0] = lerp(point1, point2, f12);
+                tPoints[1] = lerp(point0, point2, f02);
+                tPoints[2] = lerp(point2, point3, f23);
+                tPoints[4] = (point1 - point2) * weight2;
+                tCount = 1;
+                break;
+			case 52: //110100
+				tPoints[0] = lerp(point3, point1, f31);
+                tPoints[1] = lerp(point2, point3, f23);
+                tPoints[2] = lerp(point0, point3, f03);
+                tPoints[4] = (point1 - point3) * weight3;
+                tCount = 1;
+                break;
+			case 46: //101110
+				tPoints[0] = lerp(point0, point2, f02);
+                tPoints[1] = lerp(point0, point3, f03);
+                tPoints[2] = lerp(point1, point2, f12);
+                tPoints[3] = lerp(point3, point1, f31);
+                tPoints[4] = (point2 - point0) * weight0;
+                tPoints[5] = (point3 - point1) * weight1;
+                tCount = 2;
+                break;
+			case 29: //011101
+				tPoints[0] = lerp(point0, point1, f01);
+                tPoints[1] = lerp(point0, point3, f03);
+                tPoints[2] = lerp(point1, point2, f12);
+                tPoints[3] = lerp(point2, point3, f23);
+                tPoints[4] = (point1 - point0) * weight0;
+                tPoints[5] = (point3 - point2) * weight2;
+                tCount = 2;
+                break;
+			case 51: //110011
+				tPoints[0] = lerp(point0, point2, f02);
+                tPoints[1] = lerp(point2, point3, f23);
+                tPoints[2] = lerp(point0, point1, f01);
+                tPoints[3] = lerp(point3, point1, f31);
+                tPoints[4] = (point0 - point2) * weight2;
+                tPoints[5] = (point3 - point1) * weight1;
+                tCount = 2;
+                break;
+			default:
+				tCount = 0;
+				break;	
+		}
+
+		for(int tri = 1; tri <= 2; tri++)
+		{
+			int tIndex = (id.x) * (yBound - 1) * (zBound - 1) * 36   //32 xVerts
+					   + (id.y) * (zBound - 1) * 36				     //32 yVerts
+					   + (id.z) * 36								 //32 zverts
+					   + t * 6										 //6  tetras 
+					   + (tri - 1) * 3;								 //6  vertices, start at +0 and +3
+
+			trianglesToAdd[tIndex].index = 0;
+			trianglesToAdd[tIndex + 1].index = 0;
+			trianglesToAdd[tIndex + 2].index = 0;
+			trianglesToAdd[tIndex].position = float3(0,0,0);
+			trianglesToAdd[tIndex + 1].position = float3(0,0,0);
+			trianglesToAdd[tIndex + 2].position = float3(0,0,0);
+
+			if(tri <= tCount)
+			{
+				float3 normal = cross(tPoints[tri] - tPoints[tri - 1], tPoints[tri + 1] - tPoints[tri - 1]);
+				int direction = flipNormal * sign(dot(tPoints[3 + tri], normal));
+			
+				int a = tIndex + 1 - direction;
+				int b = tIndex + 1;
+				int c = tIndex + 1 + direction;
+
+				trianglesToAdd[a].position = tPoints[tri - 1];
+				trianglesToAdd[b].position = tPoints[tri    ];
+				trianglesToAdd[c].position = tPoints[tri + 1];
+				trianglesToAdd[a].index = 1;
+				trianglesToAdd[b].index = 1;
+				trianglesToAdd[c].index = 1;
+				trianglesToAdd[a].normal = trianglesToAdd[b].normal = trianglesToAdd[c].normal = normal * direction;
+			}
+		}
+	}
+}
+
+// SHAPES =====================================================================
+float sphere(float3 worldPosition, float4x4 worldToLocal, float4x4 localToWorld)
+{
+	float3 localPosition = mul(worldToLocal, float4(worldPosition, 1)).xyz;
+	float3 closestPosition = normalize(localPosition);
+	float3 worldCenter = mul(localToWorld, float4(0, 0, 0, 1)).xyz;
+	float newWeight = distance(worldPosition, worldCenter)
+	                - distance(mul(localToWorld, float4(closestPosition, 1)).xyz, worldCenter);
+
+	return newWeight;
+}
+
+float box(float3 worldPosition, float4x4 worldToLocal, float4x4 localToWorld, float bevelRadius)
+{
+	float3 localPosition = mul(worldToLocal, float4(worldPosition, 1)).xyz;
+	float3 q = abs(localPosition) - 0.5;
+
+	return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - bevelRadius;
+}
+
+float plane(float3 worldPosition, float4x4 worldToLocal, float4x4 localToWorld)
+{
+	float3 localPosition = mul(worldToLocal, float4(worldPosition, 1)).xyz;
+	float3 worldPoint = mul(localToWorld, float4(0, 0, 0, 1)).xyz;
+	float3 worldUp = mul(localToWorld, float4(0, 1, 0, 1)).xyz;
+	float3 worldProjected = mul(localToWorld, float4(0, localPosition.y, 0, 1)).xyz;
+
+	return sign(dot(worldUp, worldProjected - worldPoint)) * distance(worldProjected, worldPoint);
+}
+
+// BLEND MODES ================================================================
+float Union(float d1, float d2)
+{
+	return min(d1, d2);
+}
+
+float Subtraction(float d1, float d2)
+{
+	return max(-d2, d1);
+}
+
+float smooth(float d1, float d2, float k)
+{
+	if(k <= 0)
+		return Union(d1, d2);
+
+	float h = max(k - abs(-d2 + d1), 0) / k;
+
+	return min(d1, d2) - pow(h, 3) * k / 6;
+}
+
+float smoothUnion(float d1, float d2, float k)
+{
+	if(k <= 0)
+		return Union(d1, d2);
+
+	float h = clamp(0.5f + 0.5f * (d2 - d1) / k, 0.0, 1.0);
+	return lerp(d2, d1, h) - k * h * (1.0 - h);
+}
+
+float intersection(float d1, float d2)
+{
+	return max(d1, d2);
+}
+
+//CALCULATE WEIGHTS ===========================================================
+[numthreads(1,1,1)]
+void CalculateWeights (uint3 id : SV_DispatchThreadID)
+{
+	float3 gridPosition = float3(cellBounds.x * id.x, cellBounds.y * id.y, cellBounds.z * id.z);
+	float3 worldPosition = mul(gridToWorldMatrix, float4(gridPosition, 1)).xyz;
+	float weight = 0;
+	float newWeight;
+	uint s;
+
+	for(s = 0; s < shapeCount; s++)
+	{
+		newWeight = 0;
+
+		switch(shapes[s].shapeType)
+		{
+			case 0: //sphere
+				newWeight = sphere(worldPosition, shapes[s].worldToLocal, shapes[s].localToWorld);
+				break;
+			case 1: //box
+				newWeight = box(worldPosition, shapes[s].worldToLocal, shapes[s].localToWorld, shapes[s].bevelRadius);
+				break;
+			case 2: //plane
+				newWeight = plane(worldPosition, shapes[s].worldToLocal, shapes[s].localToWorld);
+				break;
+			default:
+				break;
+		}
+
+		//first shape has no shapes to blend with :(
+		if(s == 0)
+			weight = newWeight;
+		else 
+			switch(shapes[s].blendMode)
+			{
+				case 0: //Union
+					weight = Union(weight, newWeight);
+					break;
+				case 1: //Subtraction
+					weight = Subtraction(weight, newWeight);
+					break;
+				case 2: //smooth
+					weight = smooth(weight, newWeight, shapes[s].blendFactor);
+					break;
+				case 3: //smoothUnion
+					weight = smoothUnion(weight, newWeight, shapes[s].blendFactor);
+					break;
+				case 4: //intersection
+					weight = intersection(weight, newWeight);
+					break;
+				case 5: //repel
+					weight = 2 * Union(weight, newWeight) - smoothUnion(weight, newWeight, shapes[s].blendFactor);
+					break;
+				default:
+					break;
+			}
+	}
+
+	weights[id.x * yBound * zBound + id.y * zBound + id.z] = weight;
+}
