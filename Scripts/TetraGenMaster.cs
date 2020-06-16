@@ -1,90 +1,119 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
-namespace SHK.Isosurfaces
+namespace TetraGen
 {
     /// <summary>
-    /// Creates a large area of TetraGen chunks
+    ///     Main class of the TetraGen system.
+    ///     Place anywhere in your scene to act as the origin of an isosurface.
     /// </summary>
+    [ExecuteInEditMode]
+    [DisallowMultipleComponent]
     public class TetraGenMaster : MonoBehaviour
     {
-        [Header("Size of each cell")]
-        public Vector3 cellAspect = new Vector3(1, 1, 1);
-        [Header("Cells per chunk")]
-        public int chunkCellsX = 16;
-        public int chunkCellsY = 16;
-        public int chunkCellsZ = 16;
-        [Header("Total number of chunks")]
-        public int chunkCountX = 1;
-        public int chunkCountY = 1;
-        public int chunkCountZ = 1;
-        [Header("Other")]
+        [Tooltip("The size of one cell in a chunk.")]
+        public Vector3 cellScale = new Vector3(1, 1, 1);   
+        [Tooltip("Number of cells per chunk for each dimension.")]
+        public IntVector cellCount;
+        [Tooltip("Maximum number of chunks to generate for each dimension.")]
+        public IntVector chunkCount;
         public bool flipNormals = false;
         public bool generateCollision = true;
-        public GameObject tetraGenChunk;
+        public bool realtime = false;
+        public int realtimeChunkUpdateCount = 1;
+        public TetraGenChunk chunkTemplate;
 
-        public void OnValidate()
+        private int chunkUpdate = 0;
+        private bool realtimeReady = false;
+        private readonly List<TetraGenChunk> loadedChunks = new List<TetraGenChunk>();
+
+        private void OnValidate()
         {
-            chunkCellsX = Mathf.Max(1, chunkCellsX);
-            chunkCellsY = Mathf.Max(1, chunkCellsY);
-            chunkCellsZ = Mathf.Max(1, chunkCellsZ);
-            chunkCountX = Mathf.Max(1, chunkCountX);
-            chunkCountY = Mathf.Max(1, chunkCountY);
-            chunkCountZ = Mathf.Max(1, chunkCountZ);
+            if (!realtime && realtimeReady)
+                FullChunkEnd();
         }
 
-        /// <summary>
-        /// Master generation script. Will go through and generate
-        /// multiple isosurface chunks on a single set of shape data.
-        /// </summary>
+        private void OnEnable()
+        {
+            if (realtime)
+                FullChunkStart();
+        }
+
+        private void OnDisable()
+        {
+            if (realtime)
+                FullChunkEnd();
+        }
+
+        private void Update()
+        {
+            if (realtime)
+                FullChunkUpdate();
+        }
+
         public void Generate()
         {
-            TetraGen.ShapeData[] shapeData;
+            FullChunkStart();
+            FullChunkUpdate();
+            FullChunkEnd();
+        }
 
-            // Destroy old meshes first, then old chunks.
-            {
-                TetraGen[] oldChunks = GetComponentsInChildren<TetraGen>();
-                TetraGenMesh[] meshes = GetComponentsInChildren<TetraGenMesh>();
+        private void FullChunkStart()
+        {
+            // Destory pre-existing chunks
+            foreach(Component chunk in GetComponentsInChildren<TetraGenChunk>())
+                DestroyImmediate(chunk.gameObject);
 
-                for (int m = 0; m < meshes.Length; m++)
-                    DestroyImmediate(meshes[m].gameObject.GetComponent<MeshFilter>().sharedMesh);
+            // Clear chunk dictionary.
+            loadedChunks.Clear();
 
-                for (int i = 0; i < oldChunks.Length; i++)
-                    DestroyImmediate(oldChunks[i].gameObject);
-            }
-            
-            // Gather shape data for generating meshes
-            {
-                TetraGenShape[] shapes = GetComponentsInChildren<TetraGenShape>();
-                shapeData = new TetraGen.ShapeData[shapes.Length];
-                int cur = 0;
-
-                for (int s = 0; s < shapes.Length; s++)
-                    if (shapes[s].gameObject.activeSelf)
-                        shapeData[cur++] = shapes[s].GetShapeData();
-
-                Array.Resize(ref shapeData, cur);
-            }
-
-            // Pass shape data to every chunk and generate chunk meshes with it
-            for (int x = 0; x < chunkCountX; x++)
-                for (int y = 0; y < chunkCountY; y++)
-                    for (int z = 0; z < chunkCountZ; z++)
+            // Pass shape data to every chunk get them ready for generation
+            for (int x = 0; x < chunkCount.x; x++)
+                for (int y = 0; y < chunkCount.y; y++)
+                    for (int z = 0; z < chunkCount.x; z++)
                     {
-                        Vector3 transformOffset = new Vector3(x * chunkCellsX * cellAspect.x, y * chunkCellsY * cellAspect.y, z * chunkCellsZ * cellAspect.z);
-                        GameObject chunkObject = Instantiate(tetraGenChunk, transform);
-                        TetraGen tetraGen = chunkObject.GetComponent<TetraGen>();
-                        chunkObject.transform.localPosition = transformOffset;
-                        tetraGen.xVerts = chunkCellsX;
-                        tetraGen.yVerts = chunkCellsY;
-                        tetraGen.zVerts = chunkCellsZ;
-                        tetraGen.cellBounds = cellAspect;
-                        tetraGen.flipNormals = flipNormals;
-                        tetraGen.Generate(shapeData, generateCollision);
-                        tetraGen.Flush();
+                        TetraGenChunk tetraChunk = Instantiate(chunkTemplate.gameObject, transform).GetComponent<TetraGenChunk>();
+
+                        tetraChunk.transform.localPosition = new Vector3(
+                            x * cellCount.x * cellScale.x,
+                            y * cellCount.y * cellScale.y,
+                            z * cellCount.z * cellScale.z);
+                        tetraChunk.GenerationStart();
+
+                        loadedChunks.Add(tetraChunk);
                     }
+
+            // Initialized and Ready
+            realtimeReady = true;
+        }
+
+        private void FullChunkUpdate()
+        {
+            if (!realtimeReady)
+                FullChunkStart();
+
+            ShapeData[] shapeData = (from shape in GetComponentsInChildren<TetraGenShape>()
+                                     where shape.gameObject.activeSelf
+                                     select shape.Shape).ToArray();
+
+            //if(realtime)
+            //    for (int i = 0; i < updateChunksPerFrame; i++, chunkUpdate = ++chunkUpdate % loadedChunks.Count)
+            //        loadedChunks[chunkUpdate].GenerationUpdateNewShapeData(shapeData, generateCollision);
+            //else
+                foreach (TetraGenChunk chunk in loadedChunks)
+                    chunk.GenerationUpdateNewShapeData(shapeData, generateCollision);
+        }
+
+        private void FullChunkEnd()
+        {
+            if (realtimeReady)
+            {
+                foreach (TetraGenChunk chunk in loadedChunks)
+                    chunk.GenerationEnd();
+
+                realtimeReady = false;
+            }
         }
     }
 }

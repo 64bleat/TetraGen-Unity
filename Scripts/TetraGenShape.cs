@@ -1,47 +1,52 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using UnityEngine;
 
-namespace SHK.Isosurfaces
+namespace TetraGen
 {
     /// <summary>
-    /// TetraGen shapes to be passed into the generation step. This Class
-    /// simply generates data for the compute shader. The GameObject's
-    /// transform is used to transform the shape within the shader.
-    /// Distance sampling points are transformed into object space where
-    /// the shape's dimensions are normalized, a closest point is found and 
-    /// transformed back to world space, and the distance value is taken from
-    /// that.
+    ///     Shape data to be sent into the compute shader.
     /// </summary>
+    public struct ShapeData
+    {
+        public uint shapeType;          // uint * 1
+        public uint blendMode;          // uint * 1
+        public float blendFactor;       // float * 1
+        public float bevelRadius;       // float * 1
+        public Matrix4x4 world2Local;   // float * 16
+        public Matrix4x4 local2World;   // float * 16
+    }                                   // sizeof(uint) * 2 + sizeof(float) * 34
+
+    /// <summary>
+    ///     GameObject representation of ShapeData used in TetraGen surface
+    ///     generation. Add TetraGenShapes to GameObjects as children of 
+    ///     TetraGenMasters to be included in surface generation.
+    /// </summary>
+    [DisallowMultipleComponent]
     public class TetraGenShape : MonoBehaviour
     {
-        public enum Shape { Sphere, Box, Plane };
-        public Shape shape;
+        public enum ShapeType { Sphere, Box, Plane };
+        public enum BlendType { Union, Subtraction, Smooth, SmoothUnion, Intersect, Repel, Lerp };
 
-        public enum BlendType { Union, Subtraction, Smooth, SmoothUnion, Intersect, Repel };
-        public BlendType blendType;
-
+        public ShapeType shape = ShapeType.Sphere;
+        public BlendType blendType = BlendType.Union;
         public float blendFactor = 0;
         public float bevelRadius = 0;
-
-        public TetraGen.ShapeData GetShapeData()
-        {
-            TetraGen.ShapeData shapeData = new TetraGen.ShapeData()
-            {
-                shapeType = (uint)shape,
-                blendMode = (uint)blendType,
-                blendFactor = this.blendFactor,
-                bevelRadius = this.bevelRadius,
-                worldToLocalMatrix = transform.worldToLocalMatrix,
-                localToWorldMatrix = transform.localToWorldMatrix
-            };
-
-            return shapeData;
-        }
 
         public void OnValidate()
         {
             gameObject.name = "TetraGen " + blendType + " " + shape;
+        }
+
+        public ShapeData Shape
+        {
+            get => new ShapeData()
+            {
+                shapeType = (uint)shape,
+                blendMode = (uint)blendType,
+                blendFactor = blendFactor,
+                bevelRadius = bevelRadius,
+                world2Local = transform.worldToLocalMatrix,
+                local2World = transform.localToWorldMatrix
+            };
         }
     }
 }

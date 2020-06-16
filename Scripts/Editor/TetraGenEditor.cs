@@ -1,34 +1,11 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-using UnityEditor;
+﻿using UnityEditor;
 using UnityEngine;
 
-namespace SHK.Isosurfaces
+namespace TetraGen
 {
-    [CustomEditor(typeof(TetraGen))]
-    public class TetraGenEditor : Editor
-    {
-        public override void OnInspectorGUI()
-        {
-            base.OnInspectorGUI();
-
-            if (GUILayout.Button("Generate"))
-                ((TetraGen)target).GetComponentInParent<TetraGenMaster>().Generate();
-        }
-    }
-
-    [CustomEditor(typeof(TetraGenMesh))]
-    public class TetraGenMeshEditor : Editor
-    {
-        public override void OnInspectorGUI()
-        {
-            base.OnInspectorGUI();
-
-            if (GUILayout.Button("Generate"))
-                ((TetraGenMesh)target).GetComponentInParent<TetraGenMaster>().Generate();
-        }
-    }
-
+    /// <summary>
+    ///     Adds a "Generate Surface" button to TetraGenMaster Components
+    /// </summary>
     [CustomEditor(typeof(TetraGenMaster))]
     public class TetraGenMasterEditor : Editor
     {
@@ -36,10 +13,8 @@ namespace SHK.Isosurfaces
         {
             base.OnInspectorGUI();
 
-            if (GUILayout.Button("Generate"))
-            {
+            if (GUILayout.Button("Generate Surface"))
                 ((TetraGenMaster)target).Generate();
-            }
         }
     }
 }
