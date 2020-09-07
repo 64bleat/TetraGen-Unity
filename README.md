@@ -38,29 +38,37 @@ class BasicallyWhatTetraGenMasterDoes : Monobehaviour
 
     void Start()
     {
+        // Allocate memory buffers for generation
         chunk.GenerationStart();
     }
 
     void Update()
     {
+        // Generate the signed-distance fields on GPU
         chunk.SetTriangleBuffer(TetraGenShape[] shapes, ...)
         {
+            // sets the positions in the signed-distance field lattice
             chunk.TGPositionKernel.Dispatch(...);
 
             foreach(TetraGenShape shape in shapes)
             {
+                // Set shape to the blend buffer
                 shape.TGShapeKernel.Dispatch(...);
+                // Apply the blend buffer to the main signed-distance field buffer
                 shape.TGBlendKernel.Dispatch(...);
             }
-
+            
+            // form triangles applying the marching cube algorithm to the signed-distance field
             chunk.TGMeshKernel.Dispatch(...);
         }
 
+        // retrieve triangles from the gpu and form meshes and gameobjects out of them.
         chunk.GenerateMeshes(...)
     }
 
     void OnDestroy()
     {
+        // De-allocate buffers when you're finished.
         chunk.GenerationEnd();
     }
 }
