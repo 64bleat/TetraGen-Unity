@@ -3,9 +3,9 @@ Distance Calculations
 		
 		Distance, or weight, calculations generate a 3D array of float values,
 	that correspond to how far away the closest surface will be. When a surface
-	lies between two of these points, the inverse lerp of the weights will be
+	lies between two of these points, the inverse lerp of the weightBuffer will be
 	between 0 and 1. The algorithm is designed to have an expandable set
-	of shapes and blend modes.
+	of shapeBuffer and blend modes.
 
 Marching Tetrahedra Algoritm
 
@@ -13,10 +13,10 @@ Marching Tetrahedra Algoritm
 	Of those tetrahedra, 0 to 2 triangles may be generated.
 	Of those triangles, 0 to 6 total vertices may be generated.
 	One cell will have a maximum of 30 vertices and each vertex
-	must have a spot in the buffer, trianglesToAdd. It is not very space-efficient,
+	must have a spot in the buffer, triangleBuffer. It is not very space-efficient,
 	but it will be condensed CPU-side before being made into meshes.
 
-		After the 3D distance array "weights" is generated from ShapeData in
+		After the 3D distance array "weightBuffer" is generated from ShapeData in
 	the CalculateWeights kernel, the MarchingPentetra kernel follows
 	the Marching Tetrahedra algorithm and stores vertex data to be made
 	into meshes by the CPU portion of the script, TetraGen.
@@ -27,276 +27,406 @@ Marching Tetrahedra Algoritm
 		When the inverse lerp of the weight of two points is between 0 and 1, 
 	the isosurface runs between those two points and triangles will ge generated.
 
-checkMask
+edgeCase
 
-		checkMask condenses the slide factors into a single int to be used
+		edgeCase condenses the slide factors into a single int to be used
 	in a switch. This allows every edge case to be quickly identified.
-*/
 
+
+Cell Layout
+
+	Cupe vertices are aligned so that
+	the binary representation of their
+	index describe their local position.
+
+					(6)-----------(7)
+				   /';\' ,       / |   
+				  / ,; \  ',    /  |
+				 / ' ;  \   ' ,/   |
+			 Y  / ,' ; z \    /',  |
+			 ^ / ,'  ;/   |  /   ',|
+			 |/ ,'  (4)- -|-/- - -(5)
+			(2)----------(3)_____//
+			 |  '  /    _/|  ,,' /
+			 | ,'     _/  |'    /
+			 | ' /  _|   ,|    /
+			 |,'  _/  ,,' |   /
+			 |'/_/ ,,'    |  /
+			 | /,,'       | /
+			(0)----------(1)-->X
+
+Tetrahedron Layout
+
+	A tetrahedron ordered this way
+	reveal patterns in arrays that
+	make the algorith easier to understand.
+
+		          (2)            
+				  /;F
+				 / ; \
+				/  ;  \
+			   /   V   \
+			  /   (3)   \
+			 /  ,7   F,  \
+		    L ,'       ', \
+		  (0)------------>(1)
+
+TetraHedron Edge Index array
+	0->1
+	0->3
+	1->2
+	1->3
+	2->0
+	2->3
+*/
 #pragma kernel MarchingPentetra
-#pragma kernel CalculateWeights
+#pragma kernel CalculatePositions
+#pragma kernel WildPositions
+#pragma kernel AddBox
+#pragma kernel AddSphere
+#pragma kernel AddPlane
+#pragma kernel BlendUnion
+#pragma kernel BlendSubtraction
+#pragma kernel BlendSmooth
+#pragma kernel BlendSmoothUnion
+#pragma kernel BlendIntersection
+#pragma kernel BlendRepel
+#pragma kernel BlendLerp
 
 // Imports from TetraGenChunk
 struct ShapeData
 {
-	uint shapeType;
-	uint blendMode;
 	float blendFactor;
 	float bevelRadius;
-	float4x4 worldToLocal;
-	float4x4 localToWorld;
+	float4x4 world2Shape;
+	float4x4 shape2World;
 };
 
 // Exports to TetraGenChunk
-struct TriangleData
+struct Triangle
 {
-	float3 position;
-	float3 normal;
+	float3 a;
+	float3 b;
+	float3 c;
+	float3 n;
 };
 
-//buffers (not shared between kernels)
-StructuredBuffer<ShapeData> shapes;
-RWStructuredBuffer<float> weights;
-RWStructuredBuffer<TriangleData> trianglesToAdd;
-RWStructuredBuffer<int> cellTriangleCount;
+struct Cell
+{
+	float weight;
+	float signWeight;
+	float3 position;
+};
 
-// global variables (shared between kernels)
-float4x4 gridToWorldMatrix;
-uint shapeCount;
-int xBound, yBound, zBound;
-int flipNormal = -1;
-float3 cellBounds;
+///BUFFERS (not shared between kernels)						// Where is this used?
+extern uniform StructuredBuffer<ShapeData> shapeBuffer;		//			shape			blend
+extern uniform RWStructuredBuffer<Cell> weightBuffer;		//position	shape	tetra	blend
+extern uniform RWStructuredBuffer<float> blendBuffer;       //			shape			blend
+extern uniform RWStructuredBuffer<Triangle> tBuffer;		//					tetra
+extern uniform RWStructuredBuffer<int> cellTriangleCount;	//					tetra
+
+////GLOBAL UNIFORM (shared between kernels)
+extern uniform float4x4 chunk2World;	//position	shape
+extern uniform float4x4 world2Master;    //position  shape
+extern uniform int yBound, zBound;		//position	shape	tetra   blend
+extern uniform int flipNormal;			//					tetra
+extern uniform float3 cellScale;		//position
+
+//	Defines the 8 cube vertices
+static const uint3 cubeMap[] = {
+	uint3(0,0,0),
+	uint3(1,0,0),
+	uint3(0,1,0),
+	uint3(1,1,0),
+	uint3(0,0,1),
+	uint3(1,0,1),
+	uint3(0,1,1),
+	uint3(1,1,1)};
+//  Defines vertex positions of the cube tetrahedron subdivisions
+static const uint4 tetraCubeMap[] = {
+	uint4(0,3,5,1),
+	uint4(0,6,3,2),
+	uint4(0,5,6,4),
+	uint4(3,6,5,7),
+	uint4(0,3,6,5)};
+//	Defines the vertex order for each triangle selection case
+static const uint4 triTetraMap[] = {
+	uint4(0, 0, 0, 0),
+	uint4(0, 1, 4, 0),
+	uint4(2, 3, 0, 0),
+	uint4(4, 5, 2, 0),
+	uint4(1, 3, 5, 0),
+	uint4(1, 3, 2, 4),
+	uint4(3, 5, 4, 0),
+	uint4(5, 1, 0, 2)};
+//	Defines the 6 edges of a tetrahedron
+static const uint2 edgeTetraMap[] = {
+	uint2(0, 1),
+	uint2(0, 3),
+	uint2(1, 2),
+	uint2(1, 3),
+	uint2(2, 0),
+	uint2(2, 3)};
 
 // Inverse Lerp specialized to find position of 0
-float invLerp(float from, float to)
+inline float invLerp(float from, float to)
 {
 	return -from / (to - from);
 }
 
-// Normal sign is 0 when n == 0. zsign is -1 when n == 0.
-int zsign(float n)
-{
-	return sign(sign(n) * 2 - 1);
-}
-
 // Summation used to easily convert 3d array index to 1d
-uint summate(uint3 a)
+inline uint summate(uint3 a)
 {
 	return a.x + a.y + a.z;
 }
 
-[numthreads(1,1,1)]
+inline uint bin(float val)
+{
+	return saturate(sign(val));
+}
+
+[numthreads(8,8,8)]
 void MarchingPentetra (uint3 id : SV_DispatchThreadID)
 {
-	uint3 toWeightIndex = uint3(yBound * zBound, zBound, 1);
-	uint3 toCellIndex = uint3((yBound - 1) * (zBound - 1), zBound - 1, 1); 
-	uint cellIndex = summate(id * toCellIndex * 30);
-	uint triangleStack = 0; // Stack triangles to save on sorting time
-
-	// Mirror axis when axis index is odd
+	uint3 weightIndexer = uint3(yBound * zBound, zBound, 1);
+	uint3 cellIndexer = uint3((yBound - 1) * (zBound - 1), zBound - 1, 1); 
+	uint indexCellTri = summate(id * cellIndexer * 10);
+	uint cellCountIndex = indexCellTri / 10;
 	uint3 mirror = id % 2;
+	uint cellFlip = mirror.x ^ mirror.y ^ mirror.z ^ bin(flipNormal);
+	Cell cube[] = {
+		weightBuffer[summate((id + (cubeMap[0] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[1] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[2] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[3] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[4] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[5] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[6] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[7] ^ mirror)) * weightIndexer)]};
 
-	// Cube Vertex Index
-	uint3 cube[] = {
-		id + (uint3(0,0,0) ^ mirror),
-		id + (uint3(1,0,0) ^ mirror),
-		id + (uint3(1,1,0) ^ mirror),
-		id + (uint3(0,1,0) ^ mirror),
-		id + (uint3(0,0,1) ^ mirror),
-		id + (uint3(1,0,1) ^ mirror),
-		id + (uint3(1,1,1) ^ mirror),
-		id + (uint3(0,1,1) ^ mirror)
-	};
+	// Loop Variables
+	Triangle temp;
+	float4x3 tVerts;
+	uint4x2 edges;
+	float4 tWeights;
+	uint4 tSigns;
+	uint edgeCase;
+	uint tIndex;
+	uint tIndex2;
+	uint t;
+	int dir;
 
-	// Cube Vertex Weights
-	float cubeWeight[] = {
-		weights[summate(cube[0] * toWeightIndex)],
-		weights[summate(cube[1] * toWeightIndex)],
-		weights[summate(cube[2] * toWeightIndex)],
-		weights[summate(cube[3] * toWeightIndex)],
-		weights[summate(cube[4] * toWeightIndex)],
-		weights[summate(cube[5] * toWeightIndex)],
-		weights[summate(cube[6] * toWeightIndex)],
-		weights[summate(cube[7] * toWeightIndex)]
-	};
-
-	// 5 Tetrahedron Cube Vertex Index LUT
-	uint4 pentetra[] = {
-		uint4(0,1,2,5),
-		uint4(0,2,3,7),
-		uint4(0,4,5,7),
-		uint4(2,5,6,7),
-		uint4(0,2,5,7)
-	};
+	cellTriangleCount[cellCountIndex] = 0;
 
 	[unroll]
-	for(uint t = 0; t < 5; t++)
+	for(t = 0; t < 5; t++)
 	{
-		// Tetrahedron vertices
-		float3 point0 = cellBounds * cube[pentetra[t][0]];
-		float3 point1 = cellBounds * cube[pentetra[t][1]];
-		float3 point2 = cellBounds * cube[pentetra[t][2]];
-		float3 point3 = cellBounds * cube[pentetra[t][3]];
+		//	vertex positions for tetrahedron in local mesh space
+		tVerts[0] = cube[tetraCubeMap[t][0]].position;
+		tVerts[1] = cube[tetraCubeMap[t][1]].position;
+		tVerts[2] = cube[tetraCubeMap[t][2]].position;
+		tVerts[3] = cube[tetraCubeMap[t][3]].position;
+		//	vertex weights for tetrahedron
+		tSigns.x = cube[tetraCubeMap[t][0]].signWeight; 
+		tSigns.y = cube[tetraCubeMap[t][1]].signWeight;
+		tSigns.z = cube[tetraCubeMap[t][2]].signWeight;
+		tSigns.w = cube[tetraCubeMap[t][3]].signWeight;
+		//	generate edge case ID
+		edgeCase = 
+			  (tSigns[0] ^ tSigns[1]) << 0
+			| (tSigns[0] ^ tSigns[2]) << 1
+			| (tSigns[0] ^ tSigns[3]) << 2
+			| (tSigns[1] ^ tSigns[2]) << 3
+			| (tSigns[2] ^ tSigns[3]) << 4
+			| (tSigns[3] ^ tSigns[1]) << 5;
 
-		// Tetrahedron vertex weights
-		float weight0 = cubeWeight[pentetra[t][0]];
-		float weight1 = cubeWeight[pentetra[t][1]];
-		float weight2 = cubeWeight[pentetra[t][2]];
-		float weight3 = cubeWeight[pentetra[t][3]];
-
-		// Tetrahedron edge intersections
-		float f01 = invLerp(weight0, weight1);
-		float f02 = invLerp(weight0, weight2);
-		float f03 = invLerp(weight0, weight3);
-		float f12 = invLerp(weight1, weight2);
-		float f23 = invLerp(weight2, weight3);
-		float f31 = invLerp(weight3, weight1);
-
-		float3 tPoints[6];
-		int tCount;
-
-		uint checkMask = 0;
-		checkMask |= abs(zsign(weight0) - zsign(weight1)) >> 1;
-		checkMask |= abs(zsign(weight0) - zsign(weight2)) >> 0;
-		checkMask |= abs(zsign(weight0) - zsign(weight3)) << 1;
-		checkMask |= abs(zsign(weight1) - zsign(weight2)) << 2;
-		checkMask |= abs(zsign(weight2) - zsign(weight3)) << 3;
-		checkMask |= abs(zsign(weight3) - zsign(weight1)) << 4;
-
-		switch(checkMask)
+		switch(edgeCase)
 		{
-			case 7: // 0: 000111 = 7
-				tPoints[0] = lerp(point0, point1, f01);
-                tPoints[1] = lerp(point0, point2, f02);
-                tPoints[2] = lerp(point0, point3, f03);
-                tPoints[4] = (point1 - point0) * weight0;
-                tCount = 1;
-				break;
-			case 41: // 1: 101001 = 7
-				tPoints[0] = lerp(point0, point1, f01);
-                tPoints[1] = lerp(point1, point2, f12);
-                tPoints[2] = lerp(point3, point1, f31);
-                tPoints[4] = (point0 - point1) * weight1;
-                tCount = 1;
-                break;
-			case 26: //011010
-				tPoints[0] = lerp(point1, point2, f12);
-                tPoints[1] = lerp(point0, point2, f02);
-                tPoints[2] = lerp(point2, point3, f23);
-                tPoints[4] = (point1 - point2) * weight2;
-                tCount = 1;
-                break;
-			case 52: //110100
-				tPoints[0] = lerp(point3, point1, f31);
-                tPoints[1] = lerp(point2, point3, f23);
-                tPoints[2] = lerp(point0, point3, f03);
-                tPoints[4] = (point1 - point3) * weight3;
-                tCount = 1;
-                break;
-			case 46: //101110
-				tPoints[0] = lerp(point0, point2, f02);
-                tPoints[1] = lerp(point0, point3, f03);
-                tPoints[2] = lerp(point1, point2, f12);
-                tPoints[3] = lerp(point3, point1, f31);
-                tPoints[4] = (point2 - point0) * weight0;
-                tPoints[5] = (point3 - point1) * weight1;
-                tCount = 2;
-                break;
-			case 29: //011101
-				tPoints[0] = lerp(point0, point1, f01);
-                tPoints[1] = lerp(point0, point3, f03);
-                tPoints[2] = lerp(point1, point2, f12);
-                tPoints[3] = lerp(point2, point3, f23);
-                tPoints[4] = (point1 - point0) * weight0;
-                tPoints[5] = (point3 - point2) * weight2;
-                tCount = 2;
-                break;
-			case 51: //110011
-				tPoints[0] = lerp(point0, point2, f02);
-                tPoints[1] = lerp(point2, point3, f23);
-                tPoints[2] = lerp(point0, point1, f01);
-                tPoints[3] = lerp(point3, point1, f31);
-                tPoints[4] = (point0 - point2) * weight2;
-                tPoints[5] = (point3 - point1) * weight1;
-                tCount = 2;
-                break;
-			default:
-				tCount = 0;
-				break;	
+			case 7:  edgeCase = 1; break; // 0:		000111
+			case 41: edgeCase = 2; break; // 1:		101001
+			case 26: edgeCase = 3; break; // 2:		011010
+			case 52: edgeCase = 4; break; // 3:		110100
+			case 46: edgeCase = 5; break; // 01x23:	101110
+			case 51: edgeCase = 6; break; // 12x03: 110011
+			case 29: edgeCase = 7; break; // 20x13: 011101
+			default: edgeCase = 0; break; // empty  
 		}
 
-		[unroll]
-		for(int tri = 1; tri <= 2; tri++)
-		{
-			float3 normal = cross(tPoints[tri] - tPoints[tri - 1], tPoints[tri + 1] - tPoints[tri - 1]);
-			int direction = sign(dot(tPoints[tri + 3], normal)) * flipNormal;
-			uint tIndex = cellIndex + (triangleStack + tri -1) * 3;
-			int a = tIndex + 1 - direction;
-			int b = tIndex + 1;
-			int c = tIndex + 1 + direction;
+		//	flips the orientation of the triangles
+		dir = (cellFlip					// flip if mirror affects an odd number of axes
+			^ tSigns[(edgeCase - 1) % 4]// flip if weight direction is reversed
+			^ (uint)step(5, edgeCase))	// case 4 and up must be flipped
+			* 2 - 1;					// map 0,1 to -1,1
+		//	assign edge pairs to be lerped 
+		edges[0] = edgeTetraMap[triTetraMap[edgeCase][1 - dir]];
+		edges[1] = edgeTetraMap[triTetraMap[edgeCase][1      ]];
+		edges[2] = edgeTetraMap[triTetraMap[edgeCase][1 + dir]];
+		edges[3] = edgeTetraMap[triTetraMap[edgeCase][3      ]];
+		//	switch to full weights from weight signs
+		tWeights.x = cube[tetraCubeMap[t][0]].weight;
+		tWeights.y = cube[tetraCubeMap[t][1]].weight;
+		tWeights.z = cube[tetraCubeMap[t][2]].weight;
+		tWeights.w = cube[tetraCubeMap[t][3]].weight;
+		//	Calculate triangle vertex positions
+		//inline float invLerp(float from, float to)
+		tVerts = float4x3(
+			lerp(tVerts[edges[0][0]],tVerts[edges[0][1]], 
+				-tWeights[edges[0][0]] / (tWeights[edges[0][1]] - tWeights[edges[0][0]])),
+			lerp(tVerts[edges[1][0]],tVerts[edges[1][1]],
+				-tWeights[edges[1][0]] / (tWeights[edges[1][1]] - tWeights[edges[1][0]])),
+			lerp(tVerts[edges[2][0]], tVerts[edges[2][1]],
+				-tWeights[edges[2][0]] / (tWeights[edges[2][1]] - tWeights[edges[2][0]])),
+			lerp(tVerts[edges[3][0]], tVerts[edges[3][1]],
+				-tWeights[edges[3][0]] / (tWeights[edges[3][1]] - tWeights[edges[3][0]])));
 
-			trianglesToAdd[a].position = tPoints[tri - 1];
-			trianglesToAdd[b].position = tPoints[tri    ];
-			trianglesToAdd[c].position = tPoints[tri + 1];
-			trianglesToAdd[a].normal = trianglesToAdd[b].normal = trianglesToAdd[c].normal = normal * direction;
-		}
+		//	location of this quads space in the tBuffer
+		tIndex = indexCellTri + cellTriangleCount[cellCountIndex];
+		temp.a = tVerts[0];
+		temp.b = tVerts[1];
+		temp.c = tVerts[2];
+		temp.n = cross(tVerts[1] - tVerts[0], tVerts[2] - tVerts[0]);
+		tBuffer[tIndex++] = temp;
+		temp.a = tVerts[0];
+		temp.b = tVerts[2];
+		temp.c = tVerts[3];
+		temp.n = cross(tVerts[2] - tVerts[0], tVerts[3] - tVerts[0]);
+		tBuffer[tIndex] = temp;
 
-		triangleStack += tCount;
+		cellTriangleCount[cellCountIndex] += step(1, edgeCase) +  step(5, edgeCase);
 	}
-
-	// CellTriangleCount has 30x fewer indeces than trianglesToAdd;
-	cellTriangleCount[cellIndex / 30] = triangleStack;
 }
 
-/* SHAPES =====================================================================
-	These are signed distance formulas, specialized to take into account the 
-	Transform of the GameObject in which the shape data is derived from.
-	Sacrifices the efficiency for customizeability.
-*/
-float sphere(float3 worldPosition, float4x4 worldToLocal, float4x4 localToWorld)
+// NOISE FUNCTIONS ============================================================
+float smoothFrac(float value)
 {
-	float3 localPosition = mul(worldToLocal, float4(worldPosition, 1)).xyz;
-	float3 closestPosition = normalize(localPosition);
-	float3 worldCenter = mul(localToWorld, float4(0, 0, 0, 1)).xyz;
-	float newWeight = distance(worldPosition, worldCenter)
-	                - distance(mul(localToWorld, float4(closestPosition, 1)).xyz, worldCenter);
-
-	return newWeight;
+	return lerp(value * value, 1 - (1 - value) * (1 - value), value);
 }
 
-float box(float3 worldPosition, float4x4 worldToLocal, float4x4 localToWorld, float bevelRadius)
+float rand3d1d(float3 position, float3 dotDir = float3(12.9898, 78.233, 37.719))
 {
-	float3 localPosition = mul(worldToLocal, float4(worldPosition, 1)).xyz;
+	return frac(sin(dot(sin(position), dotDir)) * 143758.5453);
+}
+
+float3 rand3d3d(float3 value)
+{
+	return float3(
+		rand3d1d(value, float3(12.989, 78.233, 37.719)),
+		rand3d1d(value, float3(39.346, 11.135, 83.155)),
+		rand3d1d(value, float3(73.156, 52.235, 09.151)));
+}
+
+float3 noise3d3d(float3 value)
+{
+	float3 fracVal = frac(value);
+	float3 floorVal = floor(value);
+	float3 interpolator;
+	float2x3 cellNoiseZ;
+	float2x3 cellNoiseY;
+	float2x3 cellNoiseX;
+
+	interpolator.x = smoothFrac(fracVal.x);
+	interpolator.y = smoothFrac(fracVal.y);
+	interpolator.z = smoothFrac(fracVal.z);
+
+	//for x{0,1} for y{0,1} for z{0,1}
+	cellNoiseX[0] = rand3d3d(floorVal + cubeMap[0]); //000
+	cellNoiseX[1] = rand3d3d(floorVal + cubeMap[1]); //100
+	cellNoiseY[0] = lerp(cellNoiseX[0], cellNoiseX[1], interpolator.x);
+	cellNoiseX[0] = rand3d3d(floorVal + cubeMap[2]); //010
+	cellNoiseX[1] = rand3d3d(floorVal + cubeMap[3]); //110
+	cellNoiseY[1] = lerp(cellNoiseX[0], cellNoiseX[1], interpolator.x);
+	cellNoiseZ[0] = lerp(cellNoiseY[0], cellNoiseY[1], interpolator.y);
+	cellNoiseX[0] = rand3d3d(floorVal + cubeMap[4]); //001
+	cellNoiseX[1] = rand3d3d(floorVal + cubeMap[5]); //101
+	cellNoiseY[0] = lerp(cellNoiseX[0], cellNoiseX[1], interpolator.x);
+	cellNoiseX[0] = rand3d3d(floorVal + cubeMap[6]); //011
+	cellNoiseX[1] = rand3d3d(floorVal + cubeMap[7]); //111
+	cellNoiseY[1] = lerp(cellNoiseX[0], cellNoiseX[1], interpolator.x);
+	cellNoiseZ[1] = lerp(cellNoiseY[0], cellNoiseY[1], interpolator.y);
+	return          lerp(cellNoiseZ[0], cellNoiseZ[1], interpolator.z);
+}
+
+//	TRANSFORMATIONS ===========================================================
+float3 transformPoint(float3 position, float4x4 transformMatrix)
+{
+	return mul(transformMatrix, float4(position, 1)).xyz;
+}
+
+// CALCULATE POSITIONS ========================================================
+[numthreads(1,1,1)]
+void CalculatePositions (uint3 id: SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float3 cellPosition = cellScale * id;
+
+	weightBuffer[index].position = cellPosition;
+	weightBuffer[index].weight = 1;
+}
+
+[numthreads(1,1,1)]  
+void WildPositions (uint3 id: SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float3 chunkPosition = cellScale * id;
+	float3 worldPosition = transformPoint(chunkPosition, chunk2World);  
+	float3 masterPosition = transformPoint(worldPosition, world2Master);
+
+	weightBuffer[index].position = chunkPosition;
+	weightBuffer[index].position += (noise3d3d(masterPosition / 10) - 0.5) * 8.5;
+	weightBuffer[index].weight = 1;
+}
+
+// ADD SHAPE ==================================================================
+[numthreads(1,1,1)]
+void AddSphere(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float3 cellPosition = weightBuffer[index].position;
+	float3 worldPosition = mul(chunk2World, float4(cellPosition, 1)).xyz;
+	float3 localPosition = transformPoint(worldPosition, shapeBuffer[0].world2Shape);
+	float3 worldSurface = transformPoint(normalize(localPosition) / 2, shapeBuffer[0].shape2World);
+	float3 worldCenter = transformPoint(float3(0,0,0), shapeBuffer[0].shape2World);  
+
+	blendBuffer[index] = distance(worldPosition, worldCenter) - distance(worldSurface, worldCenter);
+}
+
+[numthreads(1,1,1)]
+void AddBox(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float3 cellPosition = weightBuffer[index].position;
+	float3 worldPosition = mul(chunk2World, float4(cellPosition, 1)).xyz;
+	float3 localPosition = transformPoint(worldPosition, shapeBuffer[0].world2Shape);
 	float3 q = abs(localPosition) - 0.5;
 
-	return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - bevelRadius;
+	blendBuffer[index] =  length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - shapeBuffer[0].bevelRadius;
 }
 
-float plane(float3 worldPosition, float4x4 worldToLocal, float4x4 localToWorld)
+[numthreads(1,1,1)]
+void AddPlane(uint3 id : SV_DispatchThreadID)
 {
-	float3 localPosition = mul(worldToLocal, float4(worldPosition, 1)).xyz;
-	float3 worldPoint = mul(localToWorld, float4(0, 0, 0, 1)).xyz;
-	float3 worldUp = mul(localToWorld, float4(0, 1, 0, 1)).xyz;
-	float3 worldProjected = mul(localToWorld, float4(0, localPosition.y, 0, 1)).xyz;
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;	
+	float3 chunkPosition = weightBuffer[index].position;
+	float3 worldPosition = transformPoint(chunkPosition, chunk2World);
+	float3 masterPosition = transformPoint(worldPosition, world2Master);
+	float3 shapePosition = transformPoint(worldPosition, shapeBuffer[0].world2Shape);
+	float3 closestShapePoint = shapePosition * float3(1,0,1);
+	float3 closestWorldPoint = transformPoint(closestShapePoint, shapeBuffer[0].shape2World);
+	float3 closestMasterPoint = transformPoint(closestWorldPoint, world2Master);
+	float dist = distance(closestMasterPoint, masterPosition) * sign(shapePosition.y);
 
-	return sign(dot(worldUp, worldProjected - worldPoint)) * distance(worldProjected, worldPoint);
+	dist -= length(pow(noise3d3d(masterPosition / 50), 4) * float3(.5, 20 + shapePosition.x / 10, .5));  
+	dist -= length(pow(noise3d3d(masterPosition / 10), 2) * float3(.5, 5, .5 + shapePosition.z / 10));  
+	dist -= length(noise3d3d(masterPosition / 3) * 2);  
+
+	blendBuffer[index] = dist;
 }
 
-// BLEND MODES ================================================================
-float Union(float d1, float d2)
-{
-	return min(d1, d2);
-}
-
-float Subtraction(float d1, float d2)
-{
-	return max(-d2, d1);
-}
-
+// BLEND SHAPE ================================================================
 float smooth(float d1, float d2, float k)
 {
 	if(k <= 0)
-		return Union(d1, d2);
+		return min(d1, d2);
 
 	float h = max(k - abs(-d2 + d1), 0) / k;
 
@@ -306,82 +436,133 @@ float smooth(float d1, float d2, float k)
 float smoothUnion(float d1, float d2, float k)
 {
 	if(k <= 0)
-		return Union(d1, d2);
+		return min(d1, d2);
 
 	float h = clamp(0.5f + 0.5f * (d2 - d1) / k, 0.0, 1.0);
 	return lerp(d2, d1, h) - k * h * (1.0 - h);
 }
 
-float intersection(float d1, float d2)
+[numthreads(1,1,1)]
+void BlendUnion(uint3 id : SV_DispatchThreadID)
 {
-	return max(d1, d2);
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = min(weightBuffer[index].weight, blendBuffer[index]);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendSubtraction(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight =  max(weightBuffer[index].weight, -blendBuffer[index]);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendSmooth(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = smooth(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendSmoothUnion(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = smoothUnion(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendIntersection(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = max(weightBuffer[index].weight, blendBuffer[index]);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendRepel(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = 2 * min(weightBuffer[index].weight, blendBuffer[index]) - smoothUnion(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendLerp(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = lerp(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }
 
 /* CALCULATE WEIGHTS ==========================================================
 	Switch cases coincide with the enums in TetraGenShape.
 */
-[numthreads(1,1,1)]
-void CalculateWeights (uint3 id : SV_DispatchThreadID)
-{
-	float3 gridPosition = float3(cellBounds.x * id.x, cellBounds.y * id.y, cellBounds.z * id.z);
-	float3 worldPosition = mul(gridToWorldMatrix, float4(gridPosition, 1)).xyz;
-	float weight = 0;
-	float newWeight;
-	uint s;
 
-	for(s = 0; s < shapeCount; s++)
-	{
-		switch(shapes[s].shapeType)
-		{
-			case 0: //sphere
-				newWeight = sphere(worldPosition, shapes[s].worldToLocal, shapes[s].localToWorld);
-				break;
-			case 1: //box
-				newWeight = box(worldPosition, shapes[s].worldToLocal, shapes[s].localToWorld, shapes[s].bevelRadius);
-				break;
-			case 2: //plane
-				newWeight = plane(worldPosition, shapes[s].worldToLocal, shapes[s].localToWorld);
-				break;
-			default:
-				newWeight = 0;
-				break;
-		}
+//[numthreads(1,1,1)]
+//void CalculateWeights (uint3 id : SV_DispatchThreadID)/
+//{
+//	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+//	float3 localPosition = weightBuffer[index].position;
+//	float3 worldPosition = mul(local2World, float4(localPosition, 1)).xyz;//
 
-		// First shape has no shapes to blend with :(
-		if(s == 0)
-			weight = newWeight;
-		else 
-			switch(shapes[s].blendMode)
-			{
-				case 0: //Union
-					weight = Union(weight, newWeight);
-					break;
-				case 1: //Subtraction
-					weight = Subtraction(weight, newWeight);
-					break;
-				case 2: //smooth
-					weight = smooth(weight, newWeight, shapes[s].blendFactor);
-					break;
-				case 3: //smoothUnion
-					weight = smoothUnion(weight, newWeight, shapes[s].blendFactor);
-					break;
-				case 4: //intersection
-					weight = intersection(weight, newWeight);
-					break;
-				case 5: //repel
-					weight = 2 * Union(weight, newWeight) - smoothUnion(weight, newWeight, shapes[s].blendFactor);
-					break;
-				case 6: // Lerp
-					weight = lerp(weight, Union(weight, newWeight), shapes[s].blendFactor);
-					break;
-				default:
-					weight = newWeight;
-					break;
-			}
-	}
+//	switch(shapeBuffer[shapeIndex].shapeType)
+//	{
+//		case 0: //sphere
+//			blendBuffer[index] = sphere(worldPosition, shapeBuffer[shapeIndex].world2Shape, shapeBuffer[shapeIndex].shape2World);
+//			break;
+//		case 1: //box
+//			blendBuffer[index] = box(worldPosition, shapeBuffer[shapeIndex].world2Shape, shapeBuffer[shapeIndex].shape2World, shapeBuffer[shapeIndex].bevelRadius);
+//			break;
+//		case 2: //plane
+//			blendBuffer[index] = plane(worldPosition, shapeBuffer[shapeIndex].world2Shape, shapeBuffer[shapeIndex].shape2World);
+//			break;
+//		default:
+//			blendBuffer[index] = 0;
+//			break;
+//	}
 
-	weights[id.x * yBound * zBound + id.y * zBound + id.z] = weight;
-}
+//	switch(shapeBuffer[shapeIndex].blendMode)
+//	{
+//		case 0: //Union
+//			weightBuffer[index].weight = Union(weightBuffer[index].weight, blendBuffer[index]);
+//			break;
+//		case 1: //Subtraction
+//			weightBuffer[index].weight = Subtraction(weightBuffer[index].weight, blendBuffer[index]);
+//			break;
+//		case 2: //smooth
+//			weightBuffer[index].weight = smooth(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[shapeIndex].blendFactor);
+//			break;
+//		case 3: //smoothUnion
+//			weightBuffer[index].weight = smoothUnion(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[shapeIndex].blendFactor);
+//			break;
+///		case 4: //intersection
+//			weightBuffer[index].weight = intersection(weightBuffer[index].weight, blendBuffer[index]);
+//			break;
+//		case 5: //repel
+//			weightBuffer[index].weight = 2 * Union(weightBuffer[index].weight, blendBuffer[index]) - smoothUnion(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[shapeIndex].blendFactor);
+//			break;
+//		case 6: // Lerp
+//			weightBuffer[index].weight = lerp(weightBuffer[index].weight, Union(weightBuffer[index].weight, blendBuffer[index]), shapeBuffer[shapeIndex].blendFactor);
+//			break;
+//		default:
+//			weightBuffer[index].weight = blendBuffer[index];
+///			break;
+//	}
+
+//	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+//}
+
 
 /*
 Leaving the old algorith here for now in case any new bugs arise.
@@ -389,7 +570,7 @@ Leaving the old algorith here for now in case any new bugs arise.
 [numthreads(1,1,1)]
 void MarchingTetrahedra (uint3 id : SV_DispatchThreadID)
 {
-	uint3 toWeightIndex = uint3(yBound * zBound, zBound, 1);
+	uint3 weightIndexer = uint3(yBound * zBound, zBound, 1);
 	uint3 mirror = id * 0;//% 2;
 
 	//0-6 rotate the 6-7 axis counter-clockwise, loops with % 6
@@ -405,14 +586,14 @@ void MarchingTetrahedra (uint3 id : SV_DispatchThreadID)
 	};
 
 	float cubeWeight[] = {
-		weights[summate(cube[0] * toWeightIndex)],
-		weights[summate(cube[1] * toWeightIndex)],
-		weights[summate(cube[2] * toWeightIndex)],
-		weights[summate(cube[3] * toWeightIndex)],
-		weights[summate(cube[4] * toWeightIndex)],
-		weights[summate(cube[5] * toWeightIndex)],
-		weights[summate(cube[6] * toWeightIndex)],
-		weights[summate(cube[7] * toWeightIndex)]
+		weightBuffer[summate(cube[0] * weightIndexer)],
+		weightBuffer[summate(cube[1] * weightIndexer)],
+		weightBuffer[summate(cube[2] * weightIndexer)],
+		weightBuffer[summate(cube[3] * weightIndexer)],
+		weightBuffer[summate(cube[4] * weightIndexer)],
+		weightBuffer[summate(cube[5] * weightIndexer)],
+		weightBuffer[summate(cube[6] * weightIndexer)],
+		weightBuffer[summate(cube[7] * weightIndexer)]
 	};
 
 	[unroll]
@@ -420,89 +601,89 @@ void MarchingTetrahedra (uint3 id : SV_DispatchThreadID)
 	{
 		float u = (t + 1) % 6;
 
-		float3 point0 = cellBounds * cube[6];
-		float3 point1 = cellBounds * cube[t];
-		float3 point2 = cellBounds * cube[u];
-		float3 point3 = cellBounds * cube[7];
+		float3 point0 = cellScale * cube[6];
+		float3 tVerts[1] = cellScale * cube[t];
+		float3 tVerts[2] = cellScale * cube[u];
+		float3 tVerts[3] = cellScale * cube[7];
 
-		float weight0 = cubeWeight[6];
-		float weight1 = cubeWeight[t];
-		float weight2 = cubeWeight[u];
-		float weight3 = cubeWeight[7];
+		float tWeights[0] = cubeWeight[6];
+		float tWeights[1] = cubeWeight[t];
+		float tWeights[2] = cubeWeight[u];
+		float tWeights[3] = cubeWeight[7];
 
-		float f01 = invLerp(weight0, weight1);
-		float f02 = invLerp(weight0, weight2);
-		float f03 = invLerp(weight0, weight3);
-		float f12 = invLerp(weight1, weight2);
-		float f23 = invLerp(weight2, weight3);
-		float f31 = invLerp(weight3, weight1);
+		float f01 = invLerp(tWeights[0], tWeights[1]);
+		float f02 = invLerp(tWeights[0], tWeights[2]);
+		float f03 = invLerp(tWeights[0], tWeights[3]);
+		float f12 = invLerp(tWeights[1], tWeights[2]);
+		float f23 = invLerp(tWeights[2], tWeights[3]);
+		float f31 = invLerp(tWeights[3], tWeights[1]);
 
-		float3 tPoints[6];
+		float3 faceVerts[6];
 		int tCount;
 
-		uint checkMask = 0;
-		checkMask |= abs(zsign(weight0) - zsign(weight1)) >> 1;
-		checkMask |= abs(zsign(weight0) - zsign(weight2)) >> 0;
-		checkMask |= abs(zsign(weight0) - zsign(weight3)) << 1;
-		checkMask |= abs(zsign(weight1) - zsign(weight2)) << 2;
-		checkMask |= abs(zsign(weight2) - zsign(weight3)) << 3;
-		checkMask |= abs(zsign(weight3) - zsign(weight1)) << 4;
+		uint edgeCase = 0;
+		edgeCase |= abs(zsign(tWeights[0]) - zsign(tWeights[1])) >> 1;
+		edgeCase |= abs(zsign(tWeights[0]) - zsign(tWeights[2])) >> 0;
+		edgeCase |= abs(zsign(tWeights[0]) - zsign(tWeights[3])) << 1;
+		edgeCase |= abs(zsign(tWeights[1]) - zsign(tWeights[2])) << 2;
+		edgeCase |= abs(zsign(tWeights[2]) - zsign(tWeights[3])) << 3;
+		edgeCase |= abs(zsign(tWeights[3]) - zsign(tWeights[1])) << 4;
 
-		switch(checkMask)
+		switch(edgeCase)
 		{
 			case 7: // 0: 000111 = 7
-				tPoints[0] = lerp(point0, point1, f01);
-                tPoints[1] = lerp(point0, point2, f02);
-                tPoints[2] = lerp(point0, point3, f03);
-                tPoints[4] = (point1 - point0) * weight0;
+				faceVerts[0] = lerp(point0, tVerts[1], f01);
+                faceVerts[1] = lerp(point0, tVerts[2], f02);
+                faceVerts[2] = lerp(point0, tVerts[3], f03);
+                faceVerts[4] = (tVerts[1] - point0) * tWeights[0];
                 tCount = 1;
 				break;
 			case 41: // 1: 101001 = 7
-				tPoints[0] = lerp(point0, point1, f01);
-                tPoints[1] = lerp(point1, point2, f12);
-                tPoints[2] = lerp(point3, point1, f31);
-                tPoints[4] = (point0 - point1) * weight1;
+				faceVerts[0] = lerp(point0, tVerts[1], f01);
+                faceVerts[1] = lerp(tVerts[1], tVerts[2], f12);
+                faceVerts[2] = lerp(tVerts[3], tVerts[1], f31);
+                faceVerts[4] = (point0 - tVerts[1]) * tWeights[1];
                 tCount = 1;
                 break;
 			case 26: //011010
-				tPoints[0] = lerp(point1, point2, f12);
-                tPoints[1] = lerp(point0, point2, f02);
-                tPoints[2] = lerp(point2, point3, f23);
-                tPoints[4] = (point1 - point2) * weight2;
+				faceVerts[0] = lerp(tVerts[1], tVerts[2], f12);
+                faceVerts[1] = lerp(point0, tVerts[2], f02);
+                faceVerts[2] = lerp(tVerts[2], tVerts[3], f23);
+                faceVerts[4] = (tVerts[1] - tVerts[2]) * tWeights[2];
                 tCount = 1;
                 break;
 			case 52: //110100
-				tPoints[0] = lerp(point3, point1, f31);
-                tPoints[1] = lerp(point2, point3, f23);
-                tPoints[2] = lerp(point0, point3, f03);
-                tPoints[4] = (point1 - point3) * weight3;
+				faceVerts[0] = lerp(tVerts[3], tVerts[1], f31);
+                faceVerts[1] = lerp(tVerts[2], tVerts[3], f23);
+                faceVerts[2] = lerp(point0, tVerts[3], f03);
+                faceVerts[4] = (tVerts[1] - tVerts[3]) * tWeights[3];
                 tCount = 1;
                 break;
 			case 46: //101110
-				tPoints[0] = lerp(point0, point2, f02);
-                tPoints[1] = lerp(point0, point3, f03);
-                tPoints[2] = lerp(point1, point2, f12);
-                tPoints[3] = lerp(point3, point1, f31);
-                tPoints[4] = (point2 - point0) * weight0;
-                tPoints[5] = (point3 - point1) * weight1;
+				faceVerts[0] = lerp(point0, tVerts[2], f02);
+                faceVerts[1] = lerp(point0, tVerts[3], f03);
+                faceVerts[2] = lerp(tVerts[1], tVerts[2], f12);
+                faceVerts[3] = lerp(tVerts[3], tVerts[1], f31);
+                faceVerts[4] = (tVerts[2] - point0) * tWeights[0];
+                faceVerts[5] = (tVerts[3] - tVerts[1]) * tWeights[1];
                 tCount = 2;
                 break;
 			case 29: //011101
-				tPoints[0] = lerp(point0, point1, f01);
-                tPoints[1] = lerp(point0, point3, f03);
-                tPoints[2] = lerp(point1, point2, f12);
-                tPoints[3] = lerp(point2, point3, f23);
-                tPoints[4] = (point1 - point0) * weight0;
-                tPoints[5] = (point3 - point2) * weight2;
+				faceVerts[0] = lerp(point0, tVerts[1], f01);
+                faceVerts[1] = lerp(point0, tVerts[3], f03);
+                faceVerts[2] = lerp(tVerts[1], tVerts[2], f12);
+                faceVerts[3] = lerp(tVerts[2], tVerts[3], f23);
+                faceVerts[4] = (tVerts[1] - point0) * tWeights[0];
+                faceVerts[5] = (tVerts[3] - tVerts[2]) * tWeights[2];
                 tCount = 2;
                 break;
 			case 51: //110011
-				tPoints[0] = lerp(point0, point2, f02);
-                tPoints[1] = lerp(point2, point3, f23);
-                tPoints[2] = lerp(point0, point1, f01);
-                tPoints[3] = lerp(point3, point1, f31);
-                tPoints[4] = (point0 - point2) * weight2;
-                tPoints[5] = (point3 - point1) * weight1;
+				faceVerts[0] = lerp(point0, tVerts[2], f02);
+                faceVerts[1] = lerp(tVerts[2], tVerts[3], f23);
+                faceVerts[2] = lerp(point0, tVerts[1], f01);
+                faceVerts[3] = lerp(tVerts[3], tVerts[1], f31);
+                faceVerts[4] = (point0 - tVerts[2]) * tWeights[2];
+                faceVerts[5] = (tVerts[3] - tVerts[1]) * tWeights[1];
                 tCount = 2;
                 break;
 			default:
@@ -518,23 +699,23 @@ void MarchingTetrahedra (uint3 id : SV_DispatchThreadID)
 					   + t * 6										 //6  tetras 
 					   + (tri - 1) * 3;								 //6  vertices, start at +0 and +3
 
-			trianglesToAdd[tIndex].position = float3(0,0,0);
-			trianglesToAdd[tIndex + 1].position = float3(0,0,0);
-			trianglesToAdd[tIndex + 2].position = float3(0,0,0);
+			triangleBuffer[tIndex].position = float3(0,0,0);
+			triangleBuffer[tIndex + 1].position = float3(0,0,0);
+			triangleBuffer[tIndex + 2].position = float3(0,0,0);
 
 			if(tri <= tCount)
 			{
-				float3 normal = cross(tPoints[tri] - tPoints[tri - 1], tPoints[tri + 1] - tPoints[tri - 1]);
-				int direction = sign(dot(tPoints[tri + 3], normal)) * flipNormal;
+				float3 normal = cross(faceVerts[tri] - faceVerts[tri - 1], faceVerts[tri + 1] - faceVerts[tri - 1]);
+				int direction = sign(dot(faceVerts[tri + 3], normal)) * flipNormal;
 			
 				int a = tIndex + 1 - direction;
 				int b = tIndex + 1;
 				int c = tIndex + 1 + direction;
 
-				trianglesToAdd[a].position = tPoints[tri - 1];
-				trianglesToAdd[b].position = tPoints[tri    ];
-				trianglesToAdd[c].position = tPoints[tri + 1];
-				trianglesToAdd[a].normal = trianglesToAdd[b].normal = trianglesToAdd[c].normal = normal * direction;
+				triangleBuffer[a].position = faceVerts[tri - 1];
+				triangleBuffer[b].position = faceVerts[tri    ];
+				triangleBuffer[c].position = faceVerts[tri + 1];
+				triangleBuffer[a].normal = triangleBuffer[b].normal = triangleBuffer[c].normal = normal * direction;
 			}
 		}
 	}

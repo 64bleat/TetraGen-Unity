@@ -3,9 +3,6 @@ using UnityEngine;
 
 namespace TetraGen
 {
-    /// <summary>
-    ///     Adds a "Generate Surface" button to TetraGenMaster Components
-    /// </summary>
     [CustomEditor(typeof(TetraGenMaster))]
     public class TetraGenMasterEditor : Editor
     {
@@ -15,6 +12,8 @@ namespace TetraGen
 
             if (GUILayout.Button("Generate Surface"))
                 ((TetraGenMaster)target).Generate();
+            if (GUILayout.Button("Clear Generated Objects"))
+                ((TetraGenMaster)target).ClearMeshes();
         }
     }
 }
