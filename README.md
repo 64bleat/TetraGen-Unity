@@ -1,6 +1,7 @@
 # TetraGen isosurface mesh generation for Unity
 Generate isosurface terrain and effects!
 ![img](.github/screenshot3.png)
+## [Install through Package Manager](https://docs.unity3d.com/Manual/upm-ui-giturl.html)
 
 ## Features
 * Infinite, streaming terrain in all directions. Pair with a floating origin script to go as far as you want!
