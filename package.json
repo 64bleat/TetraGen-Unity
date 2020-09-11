@@ -1,6 +1,7 @@
 {
   "name": "com.64bleat.TetraGen",
   "version": "0.1.0",
+  "packageName": "https://github.com/64bleat/TetraGen-Unity.git",
   "displayName": "TetraGen",
   "description": "Signed-distance field isosurface generation",
   "unity": "2020.1",
@@ -11,6 +12,9 @@
     "mesh",
     "procedural"
   ],
+  "dependencies": {
+    "com.unity.my-git-package": "https://github.com/64bleat/TetraGen-Unity.git#v0.1.0"
+  },
   "author": {
     "name": "64bleat",
     "email": "64bleat@gmail.com",
