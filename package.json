@@ -1,5 +1,5 @@
 {
-  "name": "com.64bleat.TetraGen",
+  "name": "com.bleat.tetragen",
   "version": "0.1.0",
   "displayName": "TetraGen",
   "description": "Signed-distance field isosurface generation",
