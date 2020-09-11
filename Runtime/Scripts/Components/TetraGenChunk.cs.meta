@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 07a20cd3acbffd749880a5b870e9b7a3
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - tetraComputer: {fileID: 7200000, guid: de1862caadf563f49a1a010c181c86e4, type: 3}
+  - meshTemplate: {fileID: 6835914707574482287, guid: bc824d4ba9891dd4b98d37ae39b3dcf7,
+      type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
