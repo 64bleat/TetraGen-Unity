@@ -1,0 +1,19 @@
+{
+  "name": "com.64bleat.TetraGen",
+  "version": "0.1.0",
+  "displayName": "TetraGen",
+  "description": "Signed-distance field isosurface generation",
+  "unity": "2020.1",
+  "unityRelease": "5f1",
+  "keywords": [
+    "terrain",
+    "isosurface",
+    "mesh",
+    "procedural"
+  ],
+  "author": {
+    "name": "64bleat",
+    "email": "64bleat@gmail.com",
+    "url": "https://github.com/64bleat/TetraGen-Unity"
+  }
+}

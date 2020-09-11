@@ -112,6 +112,7 @@ namespace TetraGen
             generationReady = true;
         }
 
+        private readonly Queue<TetraGenShape> shapeQueue = new Queue<TetraGenShape>();
         /// <summary> Pupulates the triangleData array for mesh generation. </summary>
         /// <param name="shapes"> shape data passed to the GPU to form the signed distance field </param>
         /// <param name="chunk2world"> transforms chunk space into world space on the GPU</param>
@@ -119,6 +120,16 @@ namespace TetraGen
         {
             if (!generationReady)
                 GenerationStart();
+
+            Vector3 chunkCenter;
+            chunkCenter.x = chunkIndex.x * cellScale.x;
+            chunkCenter.y = chunkIndex.y * cellScale.y;
+            chunkCenter.z = chunkIndex.z * cellScale.z;
+
+            for (int i = 0, ie = shapes.Length; i < ie; i++)
+                //if (shapes[i].activeRadius <= 0 || Vector3.Distance(shapes[i].transform.position, chunkCenter) <= shapes[i].activeRadius)
+                    shapeQueue.Enqueue(shapes[i]);
+
             Vector3 masterPosition;
             masterPosition.x = cellScale.x * cellCount.x * chunkIndex.x;
             masterPosition.y = cellScale.y * cellCount.y * chunkIndex.y;
@@ -144,38 +155,41 @@ namespace TetraGen
                 cellCount.y + 1,
                 cellCount.z + 1);
 
-            for (int i = 0, ie = shapes.Length; i < ie; i++)
+            //for (int i = 0, ie = shapes.Length; i < ie; i++)
+            foreach( TetraGenShape shape in shapeQueue)
             {
                 // SHAPE BUFFER
-                gpuIn_shapeData[0] = shapes[i].ToShapeData();
+                gpuIn_shapeData[0] = shape.ToShapeData();
                 shapeBuffer.SetData(gpuIn_shapeData);
 
                 // SHAPE KERNEL
-                shapes[i].addShape.computer.SetBuffer(shapes[i].addShape.id, "shapeBuffer", shapeBuffer);
-                shapes[i].addShape.computer.SetBuffer(shapes[i].addShape.id, "blendBuffer", blendBuffer);
-                shapes[i].addShape.computer.SetBuffer(shapes[i].addShape.id, "weightBuffer", weightBuffer);
-                shapes[i].addShape.computer.SetMatrix("chunk2World", chunk2world);
-                shapes[i].addShape.computer.SetMatrix("world2Master", world2Master);
-                shapes[i].addShape.computer.SetInt("yBound", cellCount.y + 1);
-                shapes[i].addShape.computer.SetInt("zBound", cellCount.z + 1);
-                shapes[i].addShape.computer.Dispatch(
-                    shapes[i].addShape.id,
+                shape.addShape.computer.SetBuffer(shape.addShape.id, "shapeBuffer", shapeBuffer);
+                shape.addShape.computer.SetBuffer(shape.addShape.id, "blendBuffer", blendBuffer);
+                shape.addShape.computer.SetBuffer(shape.addShape.id, "weightBuffer", weightBuffer);
+                shape.addShape.computer.SetMatrix("chunk2World", chunk2world);
+                shape.addShape.computer.SetMatrix("world2Master", world2Master);
+                shape.addShape.computer.SetInt("yBound", cellCount.y + 1);
+                shape.addShape.computer.SetInt("zBound", cellCount.z + 1);
+                shape.addShape.computer.Dispatch(
+                    shape.addShape.id,
                     cellCount.x + 1,
                     cellCount.y + 1,
                     cellCount.z + 1);
 
                 //BLEND KERNEL
-                shapes[i].blendMode.computer.SetBuffer(shapes[i].blendMode.id, "shapeBuffer", shapeBuffer);
-                shapes[i].blendMode.computer.SetBuffer(shapes[i].blendMode.id, "blendBuffer", blendBuffer);
-                shapes[i].blendMode.computer.SetBuffer(shapes[i].blendMode.id, "weightBuffer", weightBuffer);
-                shapes[i].blendMode.computer.SetInt("yBound", cellCount.y + 1);
-                shapes[i].blendMode.computer.SetInt("zBound", cellCount.z + 1);
-                shapes[i].blendMode.computer.Dispatch(
-                    shapes[i].blendMode.id,
+                shape.blendMode.computer.SetBuffer(shape.blendMode.id, "shapeBuffer", shapeBuffer);
+                shape.blendMode.computer.SetBuffer(shape.blendMode.id, "blendBuffer", blendBuffer);
+                shape.blendMode.computer.SetBuffer(shape.blendMode.id, "weightBuffer", weightBuffer);
+                shape.blendMode.computer.SetInt("yBound", cellCount.y + 1);
+                shape.blendMode.computer.SetInt("zBound", cellCount.z + 1);
+                shape.blendMode.computer.Dispatch(
+                    shape.blendMode.id,
                     cellCount.x + 1,
                     cellCount.y + 1,
                     cellCount.z + 1);
             }
+
+            shapeQueue.Clear();
 
             // MESH KERNEL
             meshKernel.computer.SetBuffer(meshKernel.id, "weightBuffer", weightBuffer);

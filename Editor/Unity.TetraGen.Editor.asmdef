@@ -1,0 +1,15 @@
+{
+    "name": "Unity.TetraGen.Editor",
+    "references": [
+        "GUID:85396060f1a747445adf161bad7e7b22"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

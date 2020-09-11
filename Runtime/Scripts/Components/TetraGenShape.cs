@@ -14,6 +14,7 @@ namespace TetraGen
         public TGBlendKernel blendMode;
         public float blendFactor = 0;
         public float bevelRadius = 0;
+        public float activeRadius = 100;
 
         public void OnValidate()
         {
