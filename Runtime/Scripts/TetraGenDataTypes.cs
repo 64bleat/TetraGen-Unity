@@ -6,6 +6,11 @@ using UnityEngine.Rendering;
 
 namespace TetraGen
 {
+    [System.Serializable]
+    public class ChunkData
+    {
+        public List<GameObject> meshes = new List<GameObject>();
+    }
     /// <summary> Representation of Signed Distance shapes for GPU processing. </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct ShapeData

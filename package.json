@@ -1,6 +1,6 @@
 {
   "name": "com.64bleat.tetragen",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "displayName": "TetraGen",
   "description": "Signed-distance field isosurface generation",
   "unity": "2020.1",
