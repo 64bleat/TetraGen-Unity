@@ -7,11 +7,21 @@ namespace TetraGen
     public class TGShapeContainer : MonoBehaviour
     {
 
-        public readonly List<TetraGenShape> shapes = new List<TetraGenShape>();
+        public TetraGenShape[] shapes = null;
 
-        private void Start()
+        private void OnValidate()
         {
-            shapes.AddRange(transform.GetComponentsInChildren<TetraGenShape>());
+            RefreshShapeList();
+        }
+
+        private void Awake()
+        {
+            RefreshShapeList();
+        }
+
+        public void RefreshShapeList()
+        {
+            shapes = transform.GetComponentsInChildren<TetraGenShape>();
         }
     }
 }

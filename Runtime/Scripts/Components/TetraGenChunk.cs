@@ -46,7 +46,6 @@ namespace TetraGen
         /// <summary> maximum number of vertices in a Mesh </summary>
         private const int verticesPerMesh = 65535;
 
-        //private TetraGenMaster master;
         /// <summary> true when this chunk is initialized for mesh generation </summary>
         private bool generationReady = false;
         /// <summary> stores the primary chunk signed distance field </summary>
@@ -68,9 +67,9 @@ namespace TetraGen
         /// <summary> stores a generic triangle array that gets added to meshes </summary>
         private ushort[] triangleMap;
         /// <summary> single structs still have to be passed to the GPU as a struct array </summary>
-        private readonly ShapeData[] gpuIn_shapeData = new ShapeData[1];
+        private readonly ShapeData[] gpuShapeData = new ShapeData[1];
         /// <summary> a single Vector3 must be passed to the GPU as a float array </summary>
-        private readonly float[] gpuIn_cellScale = new float[3];
+        private readonly float[] gpuCellScale = new float[3];
         /// <summary> calculate chunk bounds in GenerationStart</summary>
         private Bounds chunkBounds;
         /// <summary> Store discarded mesh prefab instances in a pool rather than destroying them</summary>
@@ -84,6 +83,7 @@ namespace TetraGen
         /// <summary> Initializes the chunk for mesh generation </summary>
         public void GenerationStart()
         {
+            int cellDataStride = sizeof(float) * 5;
             int cellDataLength = cellCount.x * cellCount.y * cellCount.z;
             int triangleDataLength = cellDataLength * meshKernel.trianglesPerCell;
             int weightBufferLength = (cellCount.x + 1) * (cellCount.y + 1) * (cellCount.z + 1);
@@ -102,8 +102,8 @@ namespace TetraGen
             for (int t = 0; t < triangleMap.Length; t++)
                 triangleMap[t] = (ushort)t;
 
-            weightBuffer = new ComputeBuffer(weightBufferLength, sizeof(float) * 5);
-            blendBuffer = new ComputeBuffer(weightBufferLength, sizeof(float) * 5);
+            weightBuffer = new ComputeBuffer(weightBufferLength, cellDataStride);
+            blendBuffer = new ComputeBuffer(weightBufferLength, cellDataStride);
             triangleBuffer = new ComputeBuffer(triangleDataLength, Triangle.stride);
             tCountBuffer = new ComputeBuffer(cellDataLength, sizeof(int));
             shapeBuffer = new ComputeBuffer(1, ShapeData.stride);
@@ -118,7 +118,7 @@ namespace TetraGen
         /// <summary> Pupulates the triangleData array for mesh generation. </summary>
         /// <param name="shapes"> shape data passed to the GPU to form the signed distance field </param>
         /// <param name="chunk2world"> transforms chunk space into world space on the GPU</param>
-        public void SetTriangleBuffer(List<TetraGenShape> shapes, Transform master, Vector3Int chunkIndex)
+        public void SetTriangleBuffer(IList<TetraGenShape> shapes, Transform master, Vector3Int chunkIndex)
         {
             if (!generationReady)
                 GenerationStart();
@@ -136,10 +136,10 @@ namespace TetraGen
             Matrix4x4 world2Master = master.worldToLocalMatrix;
 
             //POSITION KERNEL
-            gpuIn_cellScale[0] = cellScale.x;
-            gpuIn_cellScale[1] = cellScale.y;
-            gpuIn_cellScale[2] = cellScale.z;
-            positionKernel.computer.SetFloats("cellScale", gpuIn_cellScale);
+            gpuCellScale[0] = cellScale.x;
+            gpuCellScale[1] = cellScale.y;
+            gpuCellScale[2] = cellScale.z;
+            positionKernel.computer.SetFloats("cellScale", gpuCellScale);
             positionKernel.computer.SetBuffer(positionKernel.id, "weightBuffer", weightBuffer);
             positionKernel.computer.SetMatrix("chunk2World", chunk2world); 
             positionKernel.computer.SetMatrix("world2Master", world2Master);
@@ -153,9 +153,13 @@ namespace TetraGen
 
             foreach( TetraGenShape shape in shapes)
             {
+                // SKIPS
+                if (!shape || !shape.gameObject.activeSelf)
+                    continue;
+
                 // SHAPE BUFFER
-                gpuIn_shapeData[0] = shape.ToShapeData();
-                shapeBuffer.SetData(gpuIn_shapeData);
+                gpuShapeData[0] = shape.ToShapeData();
+                shapeBuffer.SetData(gpuShapeData);
 
                 // SHAPE KERNEL
                 shape.addShape.computer.SetBuffer(shape.addShape.id, "shapeBuffer", shapeBuffer);
@@ -218,7 +222,6 @@ namespace TetraGen
 
             // Prepare mesh list
             meshCount = Mathf.CeilToInt((float)tCount / trianglesPerMesh);
-            chunkMeshes = chunkMeshes ?? new List<GameObject>(meshCount);
 
             // Trim excess mesh GameObjects
             for (int i = meshCount; i < chunkMeshes.Count; i++)

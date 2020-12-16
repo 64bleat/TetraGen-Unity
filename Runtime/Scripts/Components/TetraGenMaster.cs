@@ -8,6 +8,7 @@ namespace TetraGen
     ///     Main class of the TetraGen system.
     ///     Place anywhere in your scene to act as the origin of an isosurface.
     /// </summary>
+    [ExecuteInEditMode]
     [DisallowMultipleComponent]
     public class TetraGenMaster : MonoBehaviour
     {
@@ -19,6 +20,9 @@ namespace TetraGen
         public Vector3Int chunkCount = new Vector3Int(8, 8, 8);
         [Tooltip("The transform that contains the TetraGenShapes that will form the isosurface mesh.")]
         public TGShapeContainer shapeContainer;
+#if UNITY_EDITOR
+        public bool generateInEditMode = true;
+#endif
 
         /// <summary> TetraGenChunk handles the mesh generation </summary>
         private TetraGenChunk chunk;
@@ -28,9 +32,13 @@ namespace TetraGen
         private readonly Dictionary<Vector3Int, ChunkData> activeChunks = new Dictionary<Vector3Int, ChunkData>();
         /// <summary> This is the target followed in terrain mode </summary>
         private Transform followTarget = null;
-        private Vector3Int previousTargetChunk = Vector3Int.zero;
-        private Vector3Int[] chunkLoadOrder = null;
-        private int chunkLoadCount = 0;
+        /// <summary> Store the order in which chunks are loaded during terrain mode in a LUT </summary>
+        private Vector3Int[] chunkOrderLut = null;
+        /// <summary> Current position chunkOrderLut is associated with </summary>
+        private Vector3Int chunkOrderLutPosition = Vector3Int.zero;
+        /// <summary> How many chunks are guaranteed to be loaded for the current position </summary>
+        /// <remarks> This is reset when chunkOrderLutPosition changes </remarks>
+        private int chunkOrderLutIndex = 0;
 
         private void OnValidate()
         {
@@ -56,7 +64,11 @@ namespace TetraGen
 
         private void Update()
         {
-            switch (generationType)
+#if UNITY_EDITOR
+            if (!generateInEditMode && !UnityEditor.EditorApplication.isPlaying)
+                return;
+#endif
+                switch (generationType)
             {
                 case GenerationType.Static:
                     break;
@@ -66,7 +78,6 @@ namespace TetraGen
                     GenerateFollowTarget(); break;
             }
         }
-
         
         public void ClearMeshes()
         {
@@ -118,8 +129,8 @@ namespace TetraGen
 
                             sortedChunks.Add(dist, offset);
                         }
-                chunkLoadOrder = sortedChunks.Values.ToArray();
-                chunkLoadCount = 0;
+                chunkOrderLut = sortedChunks.Values.ToArray();
+                chunkOrderLutIndex = 0;
             }
         }
 
@@ -186,18 +197,18 @@ namespace TetraGen
             Vector3Int closestEmptyChunkId;
             float closestDistance;
 
-            if (!targetChunk.Equals(previousTargetChunk))
+            if (!targetChunk.Equals(chunkOrderLutPosition))
             {
-                chunkLoadCount = 0;
-                previousTargetChunk = targetChunk;
+                chunkOrderLutIndex = 0;
+                chunkOrderLutPosition = targetChunk;
             }
 
-            while (chunkLoadCount < chunkLoadOrder.Length && activeChunks.ContainsKey(targetChunk + chunkLoadOrder[chunkLoadCount]))
-                chunkLoadCount++;
+            while (chunkOrderLutIndex < chunkOrderLut.Length && activeChunks.ContainsKey(targetChunk + chunkOrderLut[chunkOrderLutIndex]))
+                chunkOrderLutIndex++;
 
-            if (chunkLoadCount < chunkLoadOrder.Length)
+            if (chunkOrderLutIndex < chunkOrderLut.Length)
             {
-                closestEmptyChunkId = targetChunk + chunkLoadOrder[chunkLoadCount];
+                closestEmptyChunkId = targetChunk + chunkOrderLut[chunkOrderLutIndex];
                 closestDistance = 0;
             }
             else return;
@@ -260,7 +271,7 @@ namespace TetraGen
             chunk.GenerationEnd();
             activeChunks.Clear();
             readyToGenerate = false;
-            chunkLoadOrder = null;
+            chunkOrderLut = null;
         }
     }
 }

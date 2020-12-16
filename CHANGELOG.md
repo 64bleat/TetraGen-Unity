@@ -1,12 +1,14 @@
 # Changelog
 
 ## Unreleased
+- Added display gizmos for TetraGenShapes
+- Added options in TetraGenMaster for better control over generation in-editor
 
 ## 0.2.0 - 2020-11-24
-- Shape containers now use the designated class TGShapeContainer
-- Less memory allocation all around.
+- Added TGShapeContainer to manage shape lists for generation
 - Added the ChunkData class to store more info about chunks later on.
-- More efficient management of chunk.
+- Improved memory allocation
+- Improved chunk management time
 
 ## 0.1.0 - 2020-10-09
 ### Added

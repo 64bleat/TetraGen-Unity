@@ -60,5 +60,14 @@ namespace TetraGen
 
             return addBuffer.ToArray();
         }
+
+#if UNITY_EDITOR
+        private void OnDrawGizmosSelected()
+        {
+            if (addShape && addShape.gizmoMesh)
+                Gizmos.DrawWireMesh(addShape.gizmoMesh, transform.position, transform.rotation, transform.lossyScale);
+        }
+
+#endif
     }
 }
