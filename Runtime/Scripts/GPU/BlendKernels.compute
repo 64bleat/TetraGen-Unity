@@ -1,0 +1,93 @@
+#pragma kernel BlendUnion
+#pragma kernel BlendSubtraction
+#pragma kernel BlendSmooth
+#pragma kernel BlendSmoothUnion
+#pragma kernel BlendIntersection
+#pragma kernel BlendRepel
+#pragma kernel BlendLerp 
+
+#include "Noise.cginc"
+#include "Transform.cginc"
+#include "TetraGenInclude.cginc"
+
+float smooth(float d1, float d2, float k)
+{
+	if(k <= 0)
+		return min(d1, d2);
+
+	float h = max(k - abs(-d2 + d1), 0) / k;
+
+	return min(d1, d2) - pow(h, 3) * k / 6;
+}
+
+float smoothUnion(float d1, float d2, float k)
+{
+	if(k <= 0)
+		return min(d1, d2);
+
+	float h = clamp(0.5f + 0.5f * (d2 - d1) / k, 0.0, 1.0);
+	return lerp(d2, d1, h) - k * h * (1.0 - h);
+}
+
+[numthreads(1,1,1)]
+void BlendUnion(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = min(weightBuffer[index].weight, blendBuffer[index]);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendSubtraction(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight =  max(weightBuffer[index].weight, -blendBuffer[index]);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendSmooth(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = smooth(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendSmoothUnion(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = smoothUnion(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendIntersection(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = max(weightBuffer[index].weight, blendBuffer[index]);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendRepel(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = 2 * min(weightBuffer[index].weight, blendBuffer[index]) - smoothUnion(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}
+
+[numthreads(1,1,1)]
+void BlendLerp(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+
+	weightBuffer[index].weight = lerp(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+}

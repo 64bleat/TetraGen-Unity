@@ -1,0 +1,52 @@
+#pragma kernel AddBox
+#pragma kernel AddSphere
+#pragma kernel AddPlane
+
+#include "Noise.cginc"
+#include "Transform.cginc"
+#include "TetraGenInclude.cginc"
+
+[numthreads(1,1,1)]
+void AddSphere(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float3 cellPosition = weightBuffer[index].position;
+	float3 worldPosition = mul(chunk2World, float4(cellPosition, 1)).xyz;
+	float3 localPosition = transformPoint(worldPosition, shapeBuffer[0].world2Shape);
+	float3 worldSurface = transformPoint(normalize(localPosition) / 2, shapeBuffer[0].shape2World);
+	float3 worldCenter = transformPoint(float3(0,0,0), shapeBuffer[0].shape2World);  
+
+	blendBuffer[index] = distance(worldPosition, worldCenter) - distance(worldSurface, worldCenter);
+}
+
+[numthreads(1,1,1)]
+void AddBox(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float3 cellPosition = weightBuffer[index].position;
+	float3 worldPosition = mul(chunk2World, float4(cellPosition, 1)).xyz;
+	float3 localPosition = transformPoint(worldPosition, shapeBuffer[0].world2Shape);
+	float3 q = abs(localPosition) - 0.5;
+
+	blendBuffer[index] =  length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - shapeBuffer[0].bevelRadius;
+}
+
+[numthreads(1,1,1)]
+void AddPlane(uint3 id : SV_DispatchThreadID)
+{
+	uint index = id.x * yBound * zBound + id.y * zBound + id.z;	
+	float3 chunkPosition = weightBuffer[index].position;
+	float3 worldPosition = transformPoint(chunkPosition, chunk2World);
+	float3 masterPosition = transformPoint(worldPosition, world2Master);
+	float3 shapePosition = transformPoint(worldPosition, shapeBuffer[0].world2Shape);
+	float3 closestShapePoint = shapePosition * float3(1,0,1);
+	float3 closestWorldPoint = transformPoint(closestShapePoint, shapeBuffer[0].shape2World);
+	float3 closestMasterPoint = transformPoint(closestWorldPoint, world2Master);
+	float dist = distance(closestMasterPoint, masterPosition) * sign(shapePosition.y);
+
+	dist -= length(pow(noise3d3d(masterPosition / 50), 4) * float3(.5, 20 + shapePosition.x / 10, .5));  
+	dist -= length(pow(noise3d3d(masterPosition / 10), 2) * float3(.5, 5, .5 + shapePosition.z / 10));  
+	dist -= length(noise3d3d(masterPosition / 3) * 2);  
+
+	blendBuffer[index] = dist;
+}

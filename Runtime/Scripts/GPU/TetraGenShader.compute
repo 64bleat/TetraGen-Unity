@@ -1,0 +1,236 @@
+﻿/* IsoSurface Generation ======================================================
+Deformable Lattice
+
+		First step is to create a cubic, deformable, 3D point lattice. Signed-Distance values
+	will be calculated at these points. The algorithm does not care where these points are,
+	but the surface will not look right if it overlaps with itself.
+
+Signed-Distance Calculations
+		
+		Signed-Distance data is generated using the deformable 3D lattice. When a 
+	surface lies between two lattice points, the inverse lerp of the weightBuffer will be
+	between 0 and 1.
+
+Marching Tetrahedra Algoritm
+
+		Each cubic cell in the lattice is divided into 5 tetrahedra.
+	Of those tetrahedra, 0 to 2 triangles may be generated.
+	Of those triangles, 3 vertices and normals are generated.
+	One cell will have a maximum of 10 triangles and the buffer must have space
+	for every possible triangle. It is not very space-efficient,
+	but it will be condensed CPU-side before being made into meshes.
+
+		After the lattice's signed-distance values are set by blending shapes
+	into the buffer, the mesh kernel uses the Marching Tetrahedra algorithm 
+	and stores triangle data to be made into meshes by the CPU.
+
+		When the inverse lerp of the signed-distance of two points is between 0 and 1, 
+	the isosurface runs between those two points and 1 or 2 triangles will ge 
+	generated in that cell.
+
+edgeCase
+
+		edgeCase condenses the slide factors into a single int to be used
+	in a switch. This allows every edge case to be quickly identified.
+
+Cell Layout
+
+	Cupe vertices are aligned so that
+	the binary representation of their
+	index describe their local position.
+
+					(6)-----------(7)
+				   /';\' ,       / |   
+				  / ,; \  ',    /  |
+				 / ' ;  \   ' ,/   |
+			 Y  / ,' ; z \    /',  |
+			 ^ / ,'  ;/   |  /   ',|
+			 |/ ,'  (4)- -|-/- - -(5)
+			(2)----------(3)_____//
+			 |  '  /    _/|  ,,' /
+			 | ,'     _/  |'    /
+			 | ' /  _|   ,|    /
+			 |,'  _/  ,,' |   /
+			 |'/_/ ,,'    |  /
+			 | /,,'       | /
+			(0)----------(1)-->X
+
+Tetrahedron Layout
+
+	A tetrahedron ordered this way
+	reveal patterns in arrays that
+	make the algorith easier loop.
+
+		          (2)            
+				  /;^
+				 / ; \
+				/  ;  \
+			   /   V   \
+			  /   (3)   \
+			 /  ,7   F,  \
+		    L ,'       ', \
+		  (0)------------>(1)
+
+TetraHedron Edge Index array
+	0->1
+	0->3
+	1->2
+	1->3
+	2->0
+	2->3
+*/
+#pragma kernel MarchingPentetra
+
+#include "Noise.cginc"
+#include "Transform.cginc"
+#include "TetraGenInclude.cginc"
+
+//	Defines the 8 cube vertices
+static const uint3 cubeMap[] = {
+	uint3(0,0,0),
+	uint3(1,0,0),
+	uint3(0,1,0),
+	uint3(1,1,0),
+	uint3(0,0,1),
+	uint3(1,0,1),
+	uint3(0,1,1),
+	uint3(1,1,1)};
+//  Defines vertex positions of the cube tetrahedron subdivisions
+static const uint4 tetraCubeMap[] = {
+	uint4(0,3,5,1),
+	uint4(0,6,3,2),
+	uint4(0,5,6,4),
+	uint4(3,6,5,7),
+	uint4(0,3,6,5)};
+//	Defines the vertex order for each triangle selection case
+static const uint4 triTetraMap[] = {
+	uint4(0, 0, 0, 0),
+	uint4(0, 1, 4, 0),
+	uint4(2, 3, 0, 0),
+	uint4(4, 5, 2, 0),
+	uint4(1, 3, 5, 0),
+	uint4(1, 3, 2, 4),
+	uint4(3, 5, 4, 0),
+	uint4(5, 1, 0, 2)};
+//	Defines the 6 edges of a tetrahedron
+static const uint2 edgeTetraMap[] = {
+	uint2(0, 1),
+	uint2(0, 3),
+	uint2(1, 2),
+	uint2(1, 3),
+	uint2(2, 0),
+	uint2(2, 3)};
+
+[numthreads(8,8,8)]
+void MarchingPentetra (uint3 id : SV_DispatchThreadID)
+{
+	uint3 weightIndexer = uint3(yBound * zBound, zBound, 1);
+	uint3 cellIndexer = uint3((yBound - 1) * (zBound - 1), zBound - 1, 1); 
+	uint indexCellTri = summate(id * cellIndexer * 10);
+	uint cellCountIndex = indexCellTri / 10;
+	uint3 mirror = id % 2;
+	uint cellFlip = mirror.x ^ mirror.y ^ mirror.z ^ bin(flipNormal);
+	Cell cube[] = {
+		weightBuffer[summate((id + (cubeMap[0] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[1] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[2] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[3] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[4] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[5] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[6] ^ mirror)) * weightIndexer)],
+		weightBuffer[summate((id + (cubeMap[7] ^ mirror)) * weightIndexer)]};
+
+	// Loop Variables
+	Triangle temp;
+	float4x3 tVerts;
+	uint4x2 edges;
+	float4 tWeights;
+	uint4 tSigns;
+	uint edgeCase;
+	uint tIndex;
+	uint tIndex2;
+	uint t;
+	int dir;
+
+	cellTriangleCount[cellCountIndex] = 0;
+
+	[unroll]
+	for(t = 0; t < 5; t++)
+	{
+		//	vertex positions for tetrahedron in local mesh space
+		tVerts[0] = cube[tetraCubeMap[t][0]].position;
+		tVerts[1] = cube[tetraCubeMap[t][1]].position;
+		tVerts[2] = cube[tetraCubeMap[t][2]].position;
+		tVerts[3] = cube[tetraCubeMap[t][3]].position;
+		//	vertex weights for tetrahedron
+		tSigns[0] = cube[tetraCubeMap[t][0]].signWeight; 
+		tSigns[1] = cube[tetraCubeMap[t][1]].signWeight;
+		tSigns[2] = cube[tetraCubeMap[t][2]].signWeight;
+		tSigns[3] = cube[tetraCubeMap[t][3]].signWeight;
+		//	generate edge case ID
+		edgeCase = 
+			  (tSigns[0] ^ tSigns[1]) << 0
+			| (tSigns[0] ^ tSigns[2]) << 1
+			| (tSigns[0] ^ tSigns[3]) << 2
+			| (tSigns[1] ^ tSigns[2]) << 3
+			| (tSigns[2] ^ tSigns[3]) << 4
+			| (tSigns[3] ^ tSigns[1]) << 5;
+
+		switch(edgeCase)
+		{
+			case 7:  edgeCase = 1; break; // 0:		000111
+			case 41: edgeCase = 2; break; // 1:		101001
+			case 26: edgeCase = 3; break; // 2:		011010
+			case 52: edgeCase = 4; break; // 3:		110100
+			case 46: edgeCase = 5; break; // 01x23:	101110
+			case 51: edgeCase = 6; break; // 12x03: 110011
+			case 29: edgeCase = 7; break; // 20x13: 011101
+			default: edgeCase = 0; break; // empty  
+		}
+
+		//	flips the orientation of the triangles
+		dir = (cellFlip					// flip if mirror affects an odd number of axes
+			^ tSigns[(edgeCase - 1) % 4]// flip if weight direction is reversed
+			^ (uint)step(5, edgeCase))	// case 4 and up must be flipped
+			* 2 - 1;					// map 0,1 to -1,1
+
+		//	assign edge pairs to be lerped 
+		edges[0] = edgeTetraMap[triTetraMap[edgeCase][1 - dir]];
+		edges[1] = edgeTetraMap[triTetraMap[edgeCase][1      ]];
+		edges[2] = edgeTetraMap[triTetraMap[edgeCase][1 + dir]];
+		edges[3] = edgeTetraMap[triTetraMap[edgeCase][3      ]];
+
+		//	switch to full weights from weight signs
+		tWeights.x = cube[tetraCubeMap[t][0]].weight;
+		tWeights.y = cube[tetraCubeMap[t][1]].weight;
+		tWeights.z = cube[tetraCubeMap[t][2]].weight;
+		tWeights.w = cube[tetraCubeMap[t][3]].weight;
+
+		//	Calculate triangle vertex positions
+		//inline float invLerp(float from, float to)
+		tVerts = float4x3(
+			lerp(tVerts[edges[0][0]],tVerts[edges[0][1]], 
+				-tWeights[edges[0][0]] / (tWeights[edges[0][1]] - tWeights[edges[0][0]])),
+			lerp(tVerts[edges[1][0]],tVerts[edges[1][1]],
+				-tWeights[edges[1][0]] / (tWeights[edges[1][1]] - tWeights[edges[1][0]])),
+			lerp(tVerts[edges[2][0]], tVerts[edges[2][1]],
+				-tWeights[edges[2][0]] / (tWeights[edges[2][1]] - tWeights[edges[2][0]])),
+			lerp(tVerts[edges[3][0]], tVerts[edges[3][1]],
+				-tWeights[edges[3][0]] / (tWeights[edges[3][1]] - tWeights[edges[3][0]])));
+
+		//	location of this quads space in the tBuffer
+		tIndex = indexCellTri + cellTriangleCount[cellCountIndex];
+		temp.a = tVerts[0];
+		temp.b = tVerts[1];
+		temp.c = tVerts[2];
+		temp.n = cross(tVerts[1] - tVerts[0], tVerts[2] - tVerts[0]);
+		tBuffer[tIndex++] = temp;
+		temp.a = tVerts[0];
+		temp.b = tVerts[2];
+		temp.c = tVerts[3];
+		temp.n = cross(tVerts[2] - tVerts[0], tVerts[3] - tVerts[0]);
+		tBuffer[tIndex] = temp;
+
+		cellTriangleCount[cellCountIndex] += step(1, edgeCase) +  step(5, edgeCase);
+	}
+}
