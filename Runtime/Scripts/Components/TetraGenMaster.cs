@@ -142,7 +142,7 @@ namespace TetraGen
 #if UNITY_EDITOR
             if (UnityEditor.EditorApplication.isPlaying)
                 followTarget = Camera.main.transform;
-            else
+            else if(UnityEditor.SceneView.GetAllSceneCameras() is var camList && camList.Length > 0)
                 followTarget = UnityEditor.SceneView.GetAllSceneCameras()[0].transform;
 #else
             followTarget = Camera.main.transform;

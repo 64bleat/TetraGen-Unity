@@ -1,8 +1,5 @@
 ﻿using System.Collections.Generic;
-using Unity.Collections;
 using UnityEngine;
-using UnityEngine.Rendering;
-using System.Runtime.InteropServices;
 
 namespace TetraGen
 {
@@ -83,7 +80,6 @@ namespace TetraGen
         /// <summary> Initializes the chunk for mesh generation </summary>
         public void GenerationStart()
         {
-            int cellDataStride = sizeof(float) * 5;
             int cellDataLength = cellCount.x * cellCount.y * cellCount.z;
             int triangleDataLength = cellDataLength * meshKernel.trianglesPerCell;
             int weightBufferLength = (cellCount.x + 1) * (cellCount.y + 1) * (cellCount.z + 1);
@@ -102,8 +98,8 @@ namespace TetraGen
             for (int t = 0; t < triangleMap.Length; t++)
                 triangleMap[t] = (ushort)t;
 
-            weightBuffer = new ComputeBuffer(weightBufferLength, cellDataStride);
-            blendBuffer = new ComputeBuffer(weightBufferLength, cellDataStride);
+            weightBuffer = new ComputeBuffer(weightBufferLength, Cell.stride);
+            blendBuffer = new ComputeBuffer(weightBufferLength, BlendCell.stride);
             triangleBuffer = new ComputeBuffer(triangleDataLength, Triangle.stride);
             tCountBuffer = new ComputeBuffer(cellDataLength, sizeof(int));
             shapeBuffer = new ComputeBuffer(1, ShapeData.stride);

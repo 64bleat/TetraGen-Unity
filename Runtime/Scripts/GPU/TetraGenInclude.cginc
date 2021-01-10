@@ -24,18 +24,24 @@ struct Cell
 	float3 position;
 };
 
+// GPU internal
+struct BlendCell
+{
+	float distance;
+};
+
 ///BUFFERS (not shared between kernels)						// Used in
 extern uniform StructuredBuffer<ShapeData> shapeBuffer;		//			shape			blend
-extern uniform RWStructuredBuffer<Cell> weightBuffer;		// lattice	shape	tetra	blend
-extern uniform RWStructuredBuffer<float> blendBuffer;       //			shape			blend
-extern uniform RWStructuredBuffer<Triangle> tBuffer;		//					tetra
-extern uniform RWStructuredBuffer<int> cellTriangleCount;	//					tetra
+extern uniform RWStructuredBuffer<Cell> weightBuffer;		// lattice	shape	mesh	blend
+extern uniform RWStructuredBuffer<BlendCell> blendBuffer;       //			shape			blend
+extern uniform RWStructuredBuffer<Triangle> tBuffer;		//					mesh
+extern uniform RWStructuredBuffer<int> cellTriangleCount;	//					mesh
 
 ////GLOBAL UNIFORM (shared between kernels)					// Used in
 extern uniform float4x4 chunk2World;						// lattice	shape
 extern uniform float4x4 world2Master;						// lattice  shape
-extern uniform int yBound, zBound;							// lattice	shape	tetra   blend
-extern uniform int flipNormal;								//					tetra
+extern uniform int yBound, zBound;							// lattice	shape	mesh   blend
+extern uniform int flipNormal;								//					mesh
 extern uniform float3 cellScale;							// lattice
 
 // Inverse Lerp specialized to find position of 0

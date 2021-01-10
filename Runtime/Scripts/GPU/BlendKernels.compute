@@ -34,7 +34,7 @@ void BlendUnion(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 
-	weightBuffer[index].weight = min(weightBuffer[index].weight, blendBuffer[index]);
+	weightBuffer[index].weight = min(weightBuffer[index].weight, blendBuffer[index].distance);
 	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }
 
@@ -43,7 +43,7 @@ void BlendSubtraction(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 
-	weightBuffer[index].weight =  max(weightBuffer[index].weight, -blendBuffer[index]);
+	weightBuffer[index].weight =  max(weightBuffer[index].weight, -blendBuffer[index].distance);
 	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }
 
@@ -52,7 +52,7 @@ void BlendSmooth(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 
-	weightBuffer[index].weight = smooth(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].weight = smooth(weightBuffer[index].weight, blendBuffer[index].distance, shapeBuffer[0].blendFactor);
 	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }
 
@@ -61,7 +61,7 @@ void BlendSmoothUnion(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 
-	weightBuffer[index].weight = smoothUnion(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].weight = smoothUnion(weightBuffer[index].weight, blendBuffer[index].distance, shapeBuffer[0].blendFactor);
 	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }
 
@@ -70,7 +70,7 @@ void BlendIntersection(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 
-	weightBuffer[index].weight = max(weightBuffer[index].weight, blendBuffer[index]);
+	weightBuffer[index].weight = max(weightBuffer[index].weight, blendBuffer[index].distance);
 	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }
 
@@ -79,7 +79,7 @@ void BlendRepel(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 
-	weightBuffer[index].weight = 2 * min(weightBuffer[index].weight, blendBuffer[index]) - smoothUnion(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].weight = 2 * min(weightBuffer[index].weight, blendBuffer[index].distance) - smoothUnion(weightBuffer[index].weight, blendBuffer[index].distance, shapeBuffer[0].blendFactor);
 	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }
 
@@ -88,6 +88,6 @@ void BlendLerp(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 
-	weightBuffer[index].weight = lerp(weightBuffer[index].weight, blendBuffer[index], shapeBuffer[0].blendFactor);
+	weightBuffer[index].weight = lerp(weightBuffer[index].weight, blendBuffer[index].distance, shapeBuffer[0].blendFactor);
 	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }

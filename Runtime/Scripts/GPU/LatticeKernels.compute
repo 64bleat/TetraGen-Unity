@@ -1,12 +1,12 @@
-#pragma kernel CalculatePositions
-#pragma kernel WildPositions
+#pragma kernel StandardLattice
+#pragma kernel WavyLattice
 
 #include "TetraGenInclude.cginc"
 #include "Transform.cginc"
 #include "Noise.cginc"
 
 [numthreads(1,1,1)]
-void CalculatePositions (uint3 id: SV_DispatchThreadID)
+void StandardLattice (uint3 id: SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 	float3 cellPosition = cellScale * id;
@@ -16,7 +16,7 @@ void CalculatePositions (uint3 id: SV_DispatchThreadID)
 }
 
 [numthreads(1,1,1)]  
-void WildPositions (uint3 id: SV_DispatchThreadID)
+void WavyLattice (uint3 id: SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 	float3 chunkPosition = cellScale * id;

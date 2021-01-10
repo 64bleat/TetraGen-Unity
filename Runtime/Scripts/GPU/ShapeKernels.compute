@@ -10,43 +10,43 @@
 void AddSphere(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
-	float3 cellPosition = weightBuffer[index].position;
-	float3 worldPosition = mul(chunk2World, float4(cellPosition, 1)).xyz;
-	float3 localPosition = transformPoint(worldPosition, shapeBuffer[0].world2Shape);
-	float3 worldSurface = transformPoint(normalize(localPosition) / 2, shapeBuffer[0].shape2World);
+	float3 worldLattice = transformPoint(weightBuffer[index].position, chunk2World);
+	float3 masterLattice = transformPoint(worldLattice, shapeBuffer[0].world2Shape);
+	float3 localClosest = normalize(masterLattice) * 0.5;
+	float3 worldClosest = transformPoint(localClosest, shapeBuffer[0].shape2World);
 	float3 worldCenter = transformPoint(float3(0,0,0), shapeBuffer[0].shape2World);  
 
-	blendBuffer[index] = distance(worldPosition, worldCenter) - distance(worldSurface, worldCenter);
+	blendBuffer[index].distance = distance(worldLattice, worldCenter) - distance(worldClosest, worldCenter);
 }
 
 [numthreads(1,1,1)]
 void AddBox(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
-	float3 cellPosition = weightBuffer[index].position;
-	float3 worldPosition = mul(chunk2World, float4(cellPosition, 1)).xyz;
-	float3 localPosition = transformPoint(worldPosition, shapeBuffer[0].world2Shape);
-	float3 q = abs(localPosition) - 0.5;
+	float3 worldLattice = transformPoint(weightBuffer[index].position, chunk2World);
+	float3 masterLattice = transformPoint(worldLattice, shapeBuffer[0].world2Shape);
+	float3 absLocalLattice = min(abs(masterLattice), float3(0.5,0.5,0.5));
+	float3 threshold = float3(1,1,1) * max(max(absLocalLattice.x, absLocalLattice.y), absLocalLattice.z);
+	float3 localClosest = lerp(masterLattice, sign(masterLattice) * 0.5, step(threshold, absLocalLattice));
+	float3 worldClosest = transformPoint(localClosest, shapeBuffer[0].shape2World);
+	float direction = sign(step(0.5, threshold.x) - 0.5);
 
-	blendBuffer[index] =  length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - shapeBuffer[0].bevelRadius;
+	blendBuffer[index].distance = distance(worldClosest, worldLattice) * direction;
+
 }
 
 [numthreads(1,1,1)]
 void AddPlane(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;	
-	float3 chunkPosition = weightBuffer[index].position;
-	float3 worldPosition = transformPoint(chunkPosition, chunk2World);
-	float3 masterPosition = transformPoint(worldPosition, world2Master);
-	float3 shapePosition = transformPoint(worldPosition, shapeBuffer[0].world2Shape);
-	float3 closestShapePoint = shapePosition * float3(1,0,1);
-	float3 closestWorldPoint = transformPoint(closestShapePoint, shapeBuffer[0].shape2World);
-	float3 closestMasterPoint = transformPoint(closestWorldPoint, world2Master);
-	float dist = distance(closestMasterPoint, masterPosition) * sign(shapePosition.y);
+	float3 worldLattice = transformPoint(weightBuffer[index].position, chunk2World);
+	float3 localLattice = transformPoint(worldLattice, shapeBuffer[0].world2Shape);
+	float3 localClosest = localLattice * float3(1,0,1);
+	float dist = localLattice.y;
 
-	dist -= length(pow(noise3d3d(masterPosition / 50), 4) * float3(.5, 20 + shapePosition.x / 10, .5));  
-	dist -= length(pow(noise3d3d(masterPosition / 10), 2) * float3(.5, 5, .5 + shapePosition.z / 10));  
-	dist -= length(noise3d3d(masterPosition / 3) * 2);  
+	dist -= length(pow(noise3d3d(localLattice / 50), 4) * float3(.5, 20 + localLattice.x / 10, .5));  
+	dist -= length(pow(noise3d3d(localLattice / 10), 2) * float3(.5, 5, .5 + localLattice.z / 10));  
+	dist -= length(noise3d3d(localLattice / 3) * 2);  
 
-	blendBuffer[index] = dist;
+	blendBuffer[index].distance = dist;
 }

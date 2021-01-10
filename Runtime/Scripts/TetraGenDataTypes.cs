@@ -1,18 +1,18 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.Rendering;
 
 namespace TetraGen
 {
+    /// <summary> Information associated with specific chunks </summary>
     [System.Serializable]
     public class ChunkData
     {
         public readonly List<GameObject> meshes = new List<GameObject>();
     }
 
-    /// <summary> Representation of Signed Distance shapes for GPU processing. </summary>
+    /// <summary> TetraGen signed-distance shape data </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct ShapeData
     {
@@ -24,7 +24,7 @@ namespace TetraGen
         public Matrix4x4 local2World;  
     }
 
-    /// <summary> Representation of a vertex for being assigned to meshes </summary>
+    /// <summary> UnityEngine mesh vertex data </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct Vertex
     {
@@ -38,15 +38,32 @@ namespace TetraGen
         public Vector3 normal;
     }
 
-    /// <summary> Representation of a triangle for GPU processing </summary>
+    /// <summary> TetraGen mesh triangle </summary>
+    /// <remarks> Coincides with Triangle in TetraGenInclude.cginc </remarks>
     [StructLayout(LayoutKind.Sequential)]
     public struct Triangle
     {
-        public static readonly int stride = sizeof(float) * 12;
+        public static readonly int stride = sizeof(float) * 3 * 4;
 
         public Vector3 a;
         public Vector3 b;
         public Vector3 c;
         public Vector3 n;
+    }
+
+    /// <summary> Tetragen lattice cell data</summary>
+    /// <remarks> Coincides with Cell in TetraGenInclude.cginc </remarks>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Cell
+    {
+        public static readonly int stride = sizeof(float) * 5;
+    }
+
+    /// <summary> TetraGen lattice shape blending data</summary>
+    /// <remarks> Coincides with BlendCell in TetraGenInclude.cginc </remarks>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BlendCell
+    {
+        public static readonly int stride = sizeof(float) * 1;
     }
 }
