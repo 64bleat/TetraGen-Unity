@@ -223,12 +223,12 @@ void MarchingPentetra (uint3 id : SV_DispatchThreadID)
 		temp.a = tVerts[0];
 		temp.b = tVerts[1];
 		temp.c = tVerts[2];
-		temp.n = cross(tVerts[1] - tVerts[0], tVerts[2] - tVerts[0]);
+		temp.n = temp.nb = temp.nc = cross(tVerts[1] - tVerts[0], tVerts[2] - tVerts[0]);
 		tBuffer[tIndex++] = temp;
 		temp.a = tVerts[0];
 		temp.b = tVerts[2];
 		temp.c = tVerts[3];
-		temp.n = cross(tVerts[2] - tVerts[0], tVerts[3] - tVerts[0]);
+		temp.n = temp.nb = temp.nc = cross(tVerts[2] - tVerts[0], tVerts[3] - tVerts[0]);
 		tBuffer[tIndex] = temp;
 
 		cellTriangleCount[cellCountIndex] += step(1, edgeCase) +  step(5, edgeCase);

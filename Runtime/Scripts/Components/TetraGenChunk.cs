@@ -259,11 +259,11 @@ namespace TetraGen
                 for (int t = tStart, v = 0; t < tEnd; t++)
                 {
                     vertexData[v  ].position  = triangleData[t].a;
-                    vertexData[v++].normal = triangleData[t].n;
+                    vertexData[v++].normal = triangleData[t].na;
                     vertexData[v  ].position  = triangleData[t].b;
-                    vertexData[v++].normal = triangleData[t].n;
+                    vertexData[v++].normal = triangleData[t].nb;
                     vertexData[v  ].position  = triangleData[t].c;
-                    vertexData[v++].normal = triangleData[t].n;
+                    vertexData[v++].normal = triangleData[t].nc;
                 }
                 
                 mesh.SetVertexBufferParams(vCount, Vertex.meshAttributes);

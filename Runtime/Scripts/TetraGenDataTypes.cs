@@ -43,12 +43,14 @@ namespace TetraGen
     [StructLayout(LayoutKind.Sequential)]
     public struct Triangle
     {
-        public static readonly int stride = sizeof(float) * 3 * 4;
+        public static readonly int stride = sizeof(float) * 3 * 6;
 
         public Vector3 a;
         public Vector3 b;
         public Vector3 c;
-        public Vector3 n;
+        public Vector3 na;
+        public Vector3 nb;
+        public Vector3 nc;
     }
 
     /// <summary> Tetragen lattice cell data</summary>

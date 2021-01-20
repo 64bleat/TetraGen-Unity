@@ -14,6 +14,8 @@ struct Triangle
 	float3 b;
 	float3 c;
 	float3 n;
+	float3 nb;
+	float3 nc;
 };
 
 // GPU internal
