@@ -6,40 +6,9 @@
 #include "Transform.cginc"
 #include "TetraGenInclude.cginc"
 
-[numthreads(1,1,1)]
-void AddSphere(uint3 id : SV_DispatchThreadID)
+float Map_Terrain(float3 position)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
-	float3 worldLattice = transformPoint(weightBuffer[index].position, chunk2World);
-	float3 masterLattice = transformPoint(worldLattice, shapeBuffer[0].world2Shape);
-	float3 localClosest = normalize(masterLattice) * 0.5;
-	float3 worldClosest = transformPoint(localClosest, shapeBuffer[0].shape2World);
-	float3 worldCenter = transformPoint(float3(0,0,0), shapeBuffer[0].shape2World);  
-
-	blendBuffer[index].distance = distance(worldLattice, worldCenter) - distance(worldClosest, worldCenter);
-}
-
-[numthreads(1,1,1)]
-void AddBox(uint3 id : SV_DispatchThreadID)
-{
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
-	float3 worldLattice = transformPoint(weightBuffer[index].position, chunk2World);
-	float3 masterLattice = transformPoint(worldLattice, shapeBuffer[0].world2Shape);
-	float3 absLocalLattice = min(abs(masterLattice), float3(0.5,0.5,0.5));
-	float3 threshold = float3(1,1,1) * max(max(absLocalLattice.x, absLocalLattice.y), absLocalLattice.z);
-	float3 localClosest = lerp(masterLattice, sign(masterLattice) * 0.5, step(threshold, absLocalLattice));
-	float3 worldClosest = transformPoint(localClosest, shapeBuffer[0].shape2World);
-	float direction = sign(step(0.5, threshold.x) - 0.5);
-
-	blendBuffer[index].distance = distance(worldClosest, worldLattice) * direction;
-
-}
-
-[numthreads(1,1,1)]
-void AddPlane(uint3 id : SV_DispatchThreadID)
-{
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;	
-	float3 worldLattice = transformPoint(weightBuffer[index].position, chunk2World);
+	float3 worldLattice = transformPoint(position, chunk2World);
 	float3 localLattice = transformPoint(worldLattice, shapeBuffer[0].world2Shape);
 	float3 localClosest = localLattice * float3(1,0,1);
 	float dist = localLattice.y;
@@ -48,5 +17,81 @@ void AddPlane(uint3 id : SV_DispatchThreadID)
 	dist -= length(pow(noise3d3d(localLattice / 10), 2) * float3(.5, 5, .5 + localLattice.z / 10));  
 	dist -= length(noise3d3d(localLattice / 3) * 2);  
 
-	blendBuffer[index].distance = dist;
+	return dist;
 }
+
+float Map_Sphere(float3 position)
+{
+	float3 worldLattice = transformPoint(position, chunk2World);
+	float3 masterLattice = transformPoint(worldLattice, shapeBuffer[0].world2Shape);
+	float3 localClosest = normalize(masterLattice) * 0.5;
+	float3 worldClosest = transformPoint(localClosest, shapeBuffer[0].shape2World);
+	float3 worldCenter = transformPoint(float3(0,0,0), shapeBuffer[0].shape2World);  
+	float d = distance(worldLattice, worldCenter) - distance(worldClosest, worldCenter);
+
+	return d;
+}
+
+float Map_Box(float3 position)
+{
+	float3 worldLattice = transformPoint(position, chunk2World);
+	float3 masterLattice = transformPoint(worldLattice, shapeBuffer[0].world2Shape);
+	float3 absLocalLattice = min(abs(masterLattice), float3(0.5,0.5,0.5));
+	float3 threshold = float3(1,1,1) * max(max(absLocalLattice.x, absLocalLattice.y), absLocalLattice.z);
+	float3 localClosest = lerp(masterLattice, sign(masterLattice) * 0.5, step(threshold, absLocalLattice));
+	float3 worldClosest = transformPoint(localClosest, shapeBuffer[0].shape2World);
+	float direction = sign(step(0.5, threshold.x) - 0.5);
+	float d = distance(worldClosest, worldLattice) * direction;
+
+	return d;
+}
+
+[numthreads(1,1,1)]
+void AddSphere(uint3 id : SV_DispatchThreadID)
+{
+	uint i = id.x * yBound * zBound + id.y * zBound + id.z;
+	float3 p = weightBuffer[i].position;
+	float d = Map_Sphere(p); 
+	float3 n = normalize(
+		v1 * Map_Sphere(p + v1 * e) +
+		v2 * Map_Sphere(p + v2 * e) +
+		v3 * Map_Sphere(p + v3 * e) +
+		v4 * Map_Sphere(p + v4 * e));
+
+	blendBuffer[i].distance = d;
+	blendBuffer[i].normal = n;
+}
+
+[numthreads(1,1,1)]
+void AddBox(uint3 id : SV_DispatchThreadID)
+{
+	uint i = id.x * yBound * zBound + id.y * zBound + id.z;
+	float3 p = weightBuffer[i].position;
+	float d = Map_Box(p); 
+	float3 n = normalize(
+		v1 * Map_Box(p + v1 * e) +
+		v2 * Map_Box(p + v2 * e) +
+		v3 * Map_Box(p + v3 * e) +
+		v4 * Map_Box(p + v4 * e));
+
+	blendBuffer[i].distance = d;
+	blendBuffer[i].normal = n;
+}
+
+[numthreads(1,1,1)]
+void AddPlane(uint3 id : SV_DispatchThreadID)
+{
+	uint i = id.x * yBound * zBound + id.y * zBound + id.z;
+	float3 p = weightBuffer[i].position;
+	float d = Map_Terrain(p);
+	float3 n = normalize(
+		v1 * Map_Terrain(p + v1 * e) +
+		v2 * Map_Terrain(p + v2 * e) +
+		v3 * Map_Terrain(p + v3 * e) +
+		v4 * Map_Terrain(p + v4 * e));
+
+	blendBuffer[i].distance = d;
+	blendBuffer[i].normal = n;
+	
+}
+

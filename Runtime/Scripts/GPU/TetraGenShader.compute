@@ -141,8 +141,10 @@ void MarchingPentetra (uint3 id : SV_DispatchThreadID)
 		weightBuffer[summate((id + (cubeMap[7] ^ mirror)) * weightIndexer)]};
 
 	// Loop Variables
+	uint4 cIndex;
 	Triangle temp;
 	float4x3 tVerts;
+	float4x3 tNorms;
 	uint4x2 edges;
 	float4 tWeights;
 	uint4 tSigns;
@@ -151,22 +153,35 @@ void MarchingPentetra (uint3 id : SV_DispatchThreadID)
 	uint tIndex2;
 	uint t;
 	int dir;
+	float4 lt;
 
 	cellTriangleCount[cellCountIndex] = 0;
 
 	[unroll]
 	for(t = 0; t < 5; t++)
 	{
+		// Cube indeces
+		cIndex = uint4(
+			tetraCubeMap[t][0],
+			tetraCubeMap[t][1],
+			tetraCubeMap[t][2],
+			tetraCubeMap[t][3]);
+
 		//	vertex positions for tetrahedron in local mesh space
-		tVerts[0] = cube[tetraCubeMap[t][0]].position;
-		tVerts[1] = cube[tetraCubeMap[t][1]].position;
-		tVerts[2] = cube[tetraCubeMap[t][2]].position;
-		tVerts[3] = cube[tetraCubeMap[t][3]].position;
+		tVerts[0] = cube[cIndex[0]].position;
+		tVerts[1] = cube[cIndex[1]].position;
+		tVerts[2] = cube[cIndex[2]].position;
+		tVerts[3] = cube[cIndex[3]].position;
+		// normals
+		tNorms[0] = cube[cIndex[0]].normal;
+		tNorms[1] = cube[cIndex[1]].normal;
+		tNorms[2] = cube[cIndex[2]].normal;
+		tNorms[3] = cube[cIndex[3]].normal;
 		//	vertex weights for tetrahedron
-		tSigns[0] = cube[tetraCubeMap[t][0]].signWeight; 
-		tSigns[1] = cube[tetraCubeMap[t][1]].signWeight;
-		tSigns[2] = cube[tetraCubeMap[t][2]].signWeight;
-		tSigns[3] = cube[tetraCubeMap[t][3]].signWeight;
+		tSigns[0] = cube[cIndex[0]].signWeight; 
+		tSigns[1] = cube[cIndex[1]].signWeight;
+		tSigns[2] = cube[cIndex[2]].signWeight;
+		tSigns[3] = cube[cIndex[3]].signWeight;
 		//	generate edge case ID
 		edgeCase = 
 			  (tSigns[0] ^ tSigns[1]) << 0
@@ -206,29 +221,44 @@ void MarchingPentetra (uint3 id : SV_DispatchThreadID)
 		tWeights.z = cube[tetraCubeMap[t][2]].weight;
 		tWeights.w = cube[tetraCubeMap[t][3]].weight;
 
+		// Lerp values
+		lt = float4(
+			-tWeights[edges[0][0]] / (tWeights[edges[0][1]] - tWeights[edges[0][0]]),
+			-tWeights[edges[1][0]] / (tWeights[edges[1][1]] - tWeights[edges[1][0]]),
+			-tWeights[edges[2][0]] / (tWeights[edges[2][1]] - tWeights[edges[2][0]]),
+			-tWeights[edges[3][0]] / (tWeights[edges[3][1]] - tWeights[edges[3][0]]));
+
 		//	Calculate triangle vertex positions
 		//inline float invLerp(float from, float to)
 		tVerts = float4x3(
-			lerp(tVerts[edges[0][0]],tVerts[edges[0][1]], 
-				-tWeights[edges[0][0]] / (tWeights[edges[0][1]] - tWeights[edges[0][0]])),
-			lerp(tVerts[edges[1][0]],tVerts[edges[1][1]],
-				-tWeights[edges[1][0]] / (tWeights[edges[1][1]] - tWeights[edges[1][0]])),
-			lerp(tVerts[edges[2][0]], tVerts[edges[2][1]],
-				-tWeights[edges[2][0]] / (tWeights[edges[2][1]] - tWeights[edges[2][0]])),
-			lerp(tVerts[edges[3][0]], tVerts[edges[3][1]],
-				-tWeights[edges[3][0]] / (tWeights[edges[3][1]] - tWeights[edges[3][0]])));
+			lerp(tVerts[edges[0][0]], tVerts[edges[0][1]], lt[0]),
+			lerp(tVerts[edges[1][0]], tVerts[edges[1][1]], lt[1]),
+			lerp(tVerts[edges[2][0]], tVerts[edges[2][1]], lt[2]),
+			lerp(tVerts[edges[3][0]], tVerts[edges[3][1]], lt[3]));
+
+		tNorms = float4x3(
+			lerp(tNorms[edges[0][0]], tNorms[edges[0][1]], lt[0]),
+			lerp(tNorms[edges[1][0]], tNorms[edges[1][1]], lt[1]),
+			lerp(tNorms[edges[2][0]], tNorms[edges[2][1]], lt[2]),
+			lerp(tNorms[edges[3][0]], tNorms[edges[3][1]], lt[3]));
 
 		//	location of this quads space in the tBuffer
 		tIndex = indexCellTri + cellTriangleCount[cellCountIndex];
 		temp.a = tVerts[0];
 		temp.b = tVerts[1];
 		temp.c = tVerts[2];
-		temp.n = temp.nb = temp.nc = cross(tVerts[1] - tVerts[0], tVerts[2] - tVerts[0]);
+		//temp.n = temp.nb = temp.nc = cross(tVerts[1] - tVerts[0], tVerts[2] - tVerts[0]);
+		temp.n = tNorms[0];
+		temp.nb = tNorms[1];
+		temp.nc = tNorms[2];
 		tBuffer[tIndex++] = temp;
 		temp.a = tVerts[0];
 		temp.b = tVerts[2];
 		temp.c = tVerts[3];
-		temp.n = temp.nb = temp.nc = cross(tVerts[2] - tVerts[0], tVerts[3] - tVerts[0]);
+		//temp.n = temp.nb = temp.nc = cross(tVerts[2] - tVerts[0], tVerts[3] - tVerts[0]);
+		temp.n = tNorms[0];
+		temp.nb = tNorms[2];
+		temp.nc = tNorms[3];
 		tBuffer[tIndex] = temp;
 
 		cellTriangleCount[cellCountIndex] += step(1, edgeCase) +  step(5, edgeCase);

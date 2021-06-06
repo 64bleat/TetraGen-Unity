@@ -36,6 +36,12 @@ namespace TetraGen
 
         public Vector3 position;
         public Vector3 normal;
+
+        public Vertex(Vector3 p, Vector3 n)
+        {
+            position = p;
+            normal = n;
+        }
     }
 
     /// <summary> TetraGen mesh triangle </summary>
@@ -58,7 +64,7 @@ namespace TetraGen
     [StructLayout(LayoutKind.Sequential)]
     public struct Cell
     {
-        public static readonly int stride = sizeof(float) * 5;
+        public static readonly int stride = sizeof(float) * 8;
     }
 
     /// <summary> TetraGen lattice shape blending data</summary>
@@ -66,6 +72,6 @@ namespace TetraGen
     [StructLayout(LayoutKind.Sequential)]
     public struct BlendCell
     {
-        public static readonly int stride = sizeof(float) * 1;
+        public static readonly int stride = sizeof(float) * 4;
     }
 }

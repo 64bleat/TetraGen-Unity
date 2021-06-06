@@ -24,12 +24,14 @@ struct Cell
 	float weight;
 	float signWeight;
 	float3 position;
+	float3 normal;
 };
 
 // GPU internal
 struct BlendCell
 {
 	float distance;
+	float3 normal;
 };
 
 ///BUFFERS (not shared between kernels)						// Used in
@@ -48,6 +50,11 @@ extern uniform float3 cellScale;							// lattice
 
 // Inverse Lerp specialized to find position of 0
 inline float invLerp(float from, float to)
+{
+	return -from / (to - from);
+}
+
+inline float3 invLerp(float3 from, float3 to)
 {
 	return -from / (to - from);
 }

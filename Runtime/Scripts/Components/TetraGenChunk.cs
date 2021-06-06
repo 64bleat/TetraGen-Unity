@@ -56,13 +56,13 @@ namespace TetraGen
         /// <summary> stores a list of shapes to compile into weightBuffer </summary>
         private ComputeBuffer shapeBuffer;
         /// <summary> stores data retrieved from triangleBuffer </summary>
-        private Triangle[] triangleData;
+        private Triangle[] gpuTriangleBuffer;
         /// <summary> stores data retrieved from tCountBuffer </summary>
-        private int[] tCountData;
+        private int[] gpuTCountBuffer;
         /// <summary> Stores data compiled from triangleData </summary>
-        private Vertex[] vertexData;
+        private Vertex[] meshVertexBuffer;
         /// <summary> stores a generic triangle array that gets added to meshes </summary>
-        private ushort[] triangleMap;
+        private ushort[] meshTriangleBuffer;
         /// <summary> single structs still have to be passed to the GPU as a struct array </summary>
         private readonly ShapeData[] gpuShapeData = new ShapeData[1];
         /// <summary> a single Vector3 must be passed to the GPU as a float array </summary>
@@ -90,13 +90,10 @@ namespace TetraGen
             chunkBoundSize.z = cellCount.z * cellScale.z;
 
             chunkBounds = new Bounds(chunkBoundSize / 2, chunkBoundSize);
-            triangleData = new Triangle[triangleDataLength];
-            tCountData = new int[cellDataLength];
-            vertexData = new Vertex[verticesPerMesh];
-            triangleMap = new ushort[verticesPerMesh];
-
-            for (int t = 0; t < triangleMap.Length; t++)
-                triangleMap[t] = (ushort)t;
+            gpuTriangleBuffer = new Triangle[triangleDataLength];
+            gpuTCountBuffer = new int[cellDataLength];
+            meshVertexBuffer = new Vertex[verticesPerMesh];
+            meshTriangleBuffer = new ushort[verticesPerMesh];
 
             weightBuffer = new ComputeBuffer(weightBufferLength, Cell.stride);
             blendBuffer = new ComputeBuffer(weightBufferLength, BlendCell.stride);
@@ -198,6 +195,9 @@ namespace TetraGen
                 cellCount.z / 8);
         }
 
+        private static readonly Dictionary<Vector3, int> welder = new Dictionary<Vector3, int>();
+        private static readonly Vertex[] vtemp = new Vertex[3];
+
         /// <summary> Forms meshes out of triangle data generated in SetTriangleBuffer. </summary>
         /// <remarks> Make sure SetTriangleBuffer has ran before executing this method.</remarks>
         /// <param name="chunkMeshes"> a list of pre-existing GameObjects with meshes for reuse to avoid excessive instantiations </param>
@@ -205,71 +205,68 @@ namespace TetraGen
         public void GenerateMeshes(Transform parent, Vector3 position, Quaternion rotation, List<GameObject> chunkMeshes)
         {
             int tCount = 0;
-            int meshCount;
+            int vCount = 0;
 
             // Get triangle data from GPU.
-            triangleBuffer.GetData(triangleData);
-            tCountBuffer.GetData(tCountData);
+            triangleBuffer.GetData(gpuTriangleBuffer);
+            tCountBuffer.GetData(gpuTCountBuffer);
 
-            // Collapse Buffer and count triangles
-            for (int c = 0, ce = tCountData.Length; c < ce; c++)
-                for (int t = c * 10, te =  t + tCountData[c]; t < te; t++)
-                    triangleData[tCount++] = triangleData[t];
+            welder.Clear();
 
-            // Prepare mesh list
-            meshCount = Mathf.CeilToInt((float)tCount / trianglesPerMesh);
+            for (int c = 0, ce = gpuTCountBuffer.Length; c < ce; c++)
+                for (int t = c * 10, te = t + gpuTCountBuffer[c]; t < te; t++)
+                {
+                    Triangle tri = gpuTriangleBuffer[t];
+                    vtemp[0] = new Vertex(tri.a, tri.na);
+                    vtemp[1] = new Vertex(tri.b, tri.nb);
+                    vtemp[2] = new Vertex(tri.c, tri.nc);
 
-            // Trim excess mesh GameObjects
-            for (int i = meshCount; i < chunkMeshes.Count; i++)
+                    //Welder
+                    for (int i = 0; i < 3; i++)
+                        if (welder.TryGetValue(vtemp[i].position, out int vIndex))
+                            meshTriangleBuffer[tCount++] = (ushort)vIndex;
+                        else
+                        {
+                            welder.Add(vtemp[i].position, vCount);
+                            meshTriangleBuffer[tCount++] = (ushort)vCount;
+                            meshVertexBuffer[vCount++] = vtemp[i];
+                        }
+                }
+
+            // Clear Unused Objects
+            if (tCount == 0 && chunkMeshes.Count != 0)
             {
-                chunkMeshes[i].TryGetComponent(out MeshFilter mf);
-                chunkMeshes[i].SetActive(false);
+                chunkMeshes[0].TryGetComponent(out MeshFilter mf);
+                chunkMeshes[0].SetActive(false);
                 mf.sharedMesh.Clear();
-                meshObjectPool.Push(chunkMeshes[i]);
+                meshObjectPool.Push(chunkMeshes[0]);
+                chunkMeshes.Clear();
             }
-
-            // Add or remove unused indeces
-            if (chunkMeshes.Count > meshCount)
-                chunkMeshes.RemoveRange(meshCount, chunkMeshes.Count - meshCount);
-            else
-                for (int i = meshCount - chunkMeshes.Count; i > 0; i--)
-                    if (meshObjectPool.Count != 0)
-                    {
-                        GameObject m = meshObjectPool.Pop();
-                        m.SetActive(true);
-                        chunkMeshes.Add(m);
-                    }
-                    else
-                        chunkMeshes.Add(Instantiate(meshTemplate.gameObject, parent));
+            else if (tCount > 0 && chunkMeshes.Count == 0)
+                if (meshObjectPool.Count != 0)
+                {
+                    GameObject m = meshObjectPool.Pop();
+                    m.SetActive(true);
+                    chunkMeshes.Add(m);
+                }
+                else
+                    chunkMeshes.Add(Instantiate(meshTemplate.gameObject, parent));
 
             // Mesh Generation
-            for (int m = 0; m < meshCount; m++)
+            if(tCount > 0)
             {
-                GameObject mo = chunkMeshes[m];
+                GameObject mo = chunkMeshes[0];
                 mo.TryGetComponent(out Transform tr);
                 mo.TryGetComponent(out MeshRenderer mr);
                 mo.TryGetComponent(out MeshFilter mf);
                 mo.TryGetComponent(out MeshCollider mc);
-                Mesh mesh = mf.sharedMesh ? mf.sharedMesh : new Mesh();
-                int tStart = m * trianglesPerMesh;
-                int tEnd = Mathf.Min(tCount, tStart + trianglesPerMesh);
-                int vCount = (tEnd - tStart) * 3;
-
-                // Disperse chunk mesh data into individual meshes   
-                for (int t = tStart, v = 0; t < tEnd; t++)
-                {
-                    vertexData[v  ].position  = triangleData[t].a;
-                    vertexData[v++].normal = triangleData[t].na;
-                    vertexData[v  ].position  = triangleData[t].b;
-                    vertexData[v++].normal = triangleData[t].nb;
-                    vertexData[v  ].position  = triangleData[t].c;
-                    vertexData[v++].normal = triangleData[t].nc;
-                }
-                
+                Mesh mesh = GetEnsuredMesh(mf);
                 mesh.SetVertexBufferParams(vCount, Vertex.meshAttributes);
-                mesh.SetVertexBufferData(vertexData, 0, 0, vCount);
-                mesh.SetTriangles(triangleMap, 0, vCount, 0, false, 0);
+                mesh.SetVertexBufferData(meshVertexBuffer, 0, 0, vCount);
+                mesh.SetTriangles(meshTriangleBuffer, 0, tCount, 0, false, 0);
                 mesh.bounds = chunkBounds;
+                mesh.RecalculateTangents();
+                mesh.RecalculateBounds();
                 tr.SetPositionAndRotation(position, rotation);
                 mo.layer = parent.gameObject.layer;
                 mf.sharedMesh = mesh;
@@ -282,20 +279,32 @@ namespace TetraGen
             }
         }
 
+        private Mesh GetEnsuredMesh(MeshFilter mf)
+        { 
+            if (mf.sharedMesh)
+                return mf.sharedMesh;
+
+            Mesh mesh = new Mesh();
+
+            mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+
+            return mesh;
+        }
+
         /// <summary> Frees all memory associated with mesh generation </summary>
         public void GenerationEnd()
         {
             if (generationReady)
             {
-                triangleData = null;
+                gpuTriangleBuffer = null;
                 weightBuffer.Release();
                 blendBuffer.Release();
                 triangleBuffer.Release();
                 tCountBuffer.Release();
                 shapeBuffer.Release();
                 generationReady = false;
-                vertexData = null;
-                triangleMap = null;
+                meshVertexBuffer = null;
+                meshTriangleBuffer = null;
             }
         }
     }

@@ -33,8 +33,10 @@ float smoothUnion(float d1, float d2, float k)
 void BlendUnion(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float t = step(blendBuffer[index].distance, weightBuffer[index].weight);
 
-	weightBuffer[index].weight = min(weightBuffer[index].weight, blendBuffer[index].distance);
+	weightBuffer[index].weight = lerp(weightBuffer[index].weight, blendBuffer[index].distance, t);
+	weightBuffer[index].normal = lerp(weightBuffer[index].normal, blendBuffer[index].normal, t);
 	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }
 
@@ -42,8 +44,10 @@ void BlendUnion(uint3 id : SV_DispatchThreadID)
 void BlendSubtraction(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float t = step( weightBuffer[index].weight, -blendBuffer[index].distance);
 
-	weightBuffer[index].weight =  max(weightBuffer[index].weight, -blendBuffer[index].distance);
+	weightBuffer[index].weight =  lerp(weightBuffer[index].weight, -blendBuffer[index].distance, t);
+	weightBuffer[index].normal =  lerp(weightBuffer[index].normal, -blendBuffer[index].normal, t);
 	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
 }
 
@@ -87,7 +91,15 @@ void BlendRepel(uint3 id : SV_DispatchThreadID)
 void BlendLerp(uint3 id : SV_DispatchThreadID)
 {
 	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
-
-	weightBuffer[index].weight = lerp(weightBuffer[index].weight, blendBuffer[index].distance, shapeBuffer[0].blendFactor);
-	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+	float t = shapeBuffer[0].blendFactor;
+	float da = weightBuffer[index].weight;
+	float db = blendBuffer[index].distance;
+	float3 na = weightBuffer[index].normal;
+	float3 nb = blendBuffer[index].normal;
+	Cell c = weightBuffer[index];
+	c.weight = lerp(da, db, t);
+	c.signWeight = bin(c.weight);
+	c.normal = lerp(na, nb, t);
+	
+	weightBuffer[index] = c;
 }
