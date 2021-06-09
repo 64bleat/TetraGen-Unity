@@ -36,10 +36,14 @@ struct BlendCell
 
 ///BUFFERS (not shared between kernels)						// Used in
 extern uniform StructuredBuffer<ShapeData> shapeBuffer;		//			shape			blend
-extern uniform RWStructuredBuffer<Cell> weightBuffer;		// lattice	shape	mesh	blend
-extern uniform RWStructuredBuffer<BlendCell> blendBuffer;       //			shape			blend
+//extern uniform RWStructuredBuffer<Cell> weightBuffer;		// lattice	shape	mesh	blend
+//extern uniform RWStructuredBuffer<BlendCell> blendBuffer;       //			shape			blend
 extern uniform RWStructuredBuffer<Triangle> tBuffer;		//					mesh
 extern uniform RWStructuredBuffer<int> cellTriangleCount;	//					mesh
+
+extern uniform RWTexture3D<float4> sdf_Position;
+extern uniform RWTexture3D<float4> sdf_NormalDistance;
+extern uniform RWTexture3D<float4> sdf_NormalDistance_Blend;
 
 ////GLOBAL UNIFORM (shared between kernels)					// Used in
 extern uniform float4x4 chunk2World;						// lattice	shape

@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace TetraGen
 {
@@ -72,6 +73,10 @@ namespace TetraGen
         /// <summary> Store discarded mesh prefab instances in a pool rather than destroying them</summary>
         private readonly Stack<GameObject> meshObjectPool = new Stack<GameObject>();
 
+        private RenderTexture rtPosition;
+        private RenderTexture rtNormalDistance;
+        private RenderTexture rtNormalDistanceBlend;
+
         private void OnDestroy()
         {
             GenerationEnd();
@@ -105,6 +110,24 @@ namespace TetraGen
             positionKernel.Init();
 
             generationReady = true;
+
+            rtPosition = new RenderTexture(32, 32, 0, RenderTextureFormat.ARGBFloat);
+            rtPosition.volumeDepth = 32;
+            rtPosition.dimension = TextureDimension.Tex3D;
+            rtPosition.enableRandomWrite = true;
+            rtPosition.Create();
+
+            rtNormalDistance = new RenderTexture(32, 32, 0, RenderTextureFormat.ARGBFloat);
+            rtNormalDistance.volumeDepth = 32;
+            rtNormalDistance.dimension = TextureDimension.Tex3D;
+            rtNormalDistance.enableRandomWrite = true;
+            rtNormalDistance.Create();
+
+            rtNormalDistanceBlend = new RenderTexture(32, 32, 0, RenderTextureFormat.ARGBFloat);
+            rtNormalDistanceBlend.volumeDepth = 32;
+            rtNormalDistanceBlend.dimension = TextureDimension.Tex3D;
+            rtNormalDistanceBlend.enableRandomWrite = true;
+            rtNormalDistanceBlend.Create();
         }
 
         //private readonly Queue<TetraGenShape> shapeQueue = new Queue<TetraGenShape>();
@@ -132,8 +155,9 @@ namespace TetraGen
             gpuCellScale[0] = cellScale.x;
             gpuCellScale[1] = cellScale.y;
             gpuCellScale[2] = cellScale.z;
+            positionKernel.computer.SetTexture(positionKernel.id, "sdf_Position", rtPosition);
+            positionKernel.computer.SetTexture(positionKernel.id, "sdf_NormalDistance", rtNormalDistance); 
             positionKernel.computer.SetFloats("cellScale", gpuCellScale);
-            positionKernel.computer.SetBuffer(positionKernel.id, "weightBuffer", weightBuffer);
             positionKernel.computer.SetMatrix("chunk2World", chunk2world); 
             positionKernel.computer.SetMatrix("world2Master", world2Master);
             positionKernel.computer.SetInt("yBound", cellCount.y + 1);
@@ -155,9 +179,9 @@ namespace TetraGen
                 shapeBuffer.SetData(gpuShapeData);
 
                 // SHAPE KERNEL
+                shape.addShape.computer.SetTexture(shape.addShape.id, "sdf_Position", rtPosition);
+                shape.addShape.computer.SetTexture(shape.addShape.id, "sdf_NormalDistance_Blend", rtNormalDistanceBlend);
                 shape.addShape.computer.SetBuffer(shape.addShape.id, "shapeBuffer", shapeBuffer);
-                shape.addShape.computer.SetBuffer(shape.addShape.id, "blendBuffer", blendBuffer);
-                shape.addShape.computer.SetBuffer(shape.addShape.id, "weightBuffer", weightBuffer);
                 shape.addShape.computer.SetMatrix("chunk2World", chunk2world);
                 shape.addShape.computer.SetMatrix("world2Master", world2Master);
                 shape.addShape.computer.SetInt("yBound", cellCount.y + 1);
@@ -169,9 +193,9 @@ namespace TetraGen
                     cellCount.z + 1);
 
                 //BLEND KERNEL
+                shape.blendMode.computer.SetTexture(shape.blendMode.id, "sdf_NormalDistance", rtNormalDistance);
+                shape.blendMode.computer.SetTexture(shape.blendMode.id, "sdf_NormalDistance_Blend", rtNormalDistanceBlend);
                 shape.blendMode.computer.SetBuffer(shape.blendMode.id, "shapeBuffer", shapeBuffer);
-                shape.blendMode.computer.SetBuffer(shape.blendMode.id, "blendBuffer", blendBuffer);
-                shape.blendMode.computer.SetBuffer(shape.blendMode.id, "weightBuffer", weightBuffer);
                 shape.blendMode.computer.SetInt("yBound", cellCount.y + 1);
                 shape.blendMode.computer.SetInt("zBound", cellCount.z + 1);
                 shape.blendMode.computer.Dispatch(
@@ -182,7 +206,8 @@ namespace TetraGen
             }
 
             // MESH KERNEL
-            meshKernel.computer.SetBuffer(meshKernel.id, "weightBuffer", weightBuffer);
+            meshKernel.computer.SetTexture(meshKernel.id, "sdf_Position", rtPosition);
+            meshKernel.computer.SetTexture(meshKernel.id, "sdf_NormalDistance", rtNormalDistance);
             meshKernel.computer.SetBuffer(meshKernel.id, "tBuffer", triangleBuffer);
             meshKernel.computer.SetBuffer(meshKernel.id, "cellTriangleCount", tCountBuffer);
             meshKernel.computer.SetInt("yBound", cellCount.y + 1);
@@ -267,6 +292,7 @@ namespace TetraGen
                 mesh.bounds = chunkBounds;
                 mesh.RecalculateTangents();
                 mesh.RecalculateBounds();
+                //mesh.RecalculateNormals();
                 tr.SetPositionAndRotation(position, rotation);
                 mo.layer = parent.gameObject.layer;
                 mf.sharedMesh = mesh;
@@ -305,6 +331,18 @@ namespace TetraGen
                 generationReady = false;
                 meshVertexBuffer = null;
                 meshTriangleBuffer = null;
+
+                rtPosition.Release();
+                DestroyImmediate(rtPosition);
+                rtPosition = null;
+
+                rtNormalDistance.Release();
+                DestroyImmediate(rtNormalDistance);
+                rtNormalDistance = null;
+
+                rtNormalDistanceBlend.Release();
+                DestroyImmediate(rtNormalDistanceBlend);
+                rtNormalDistanceBlend = null;
             }
         }
     }

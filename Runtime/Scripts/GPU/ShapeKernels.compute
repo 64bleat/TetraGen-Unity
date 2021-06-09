@@ -13,9 +13,12 @@ float Map_Terrain(float3 position)
 	float3 localClosest = localLattice * float3(1,0,1);
 	float dist = localLattice.y;
 
-	dist -= length(pow(noise3d3d(localLattice / 50), 4) * float3(.5, 20 + localLattice.x / 10, .5));  
-	dist -= length(pow(noise3d3d(localLattice / 10), 2) * float3(.5, 5, .5 + localLattice.z / 10));  
-	dist -= length(noise3d3d(localLattice / 3) * 2);  
+	float3 nbig = noise3d3d(localLattice / 50);
+	float big = length(pow(noise3d3d(localLattice / 50), 4) * float3(.5, 50 + localLattice.x / 10, .5)); 
+
+	dist -= big;
+	dist -= length(pow(noise3d3d(localLattice / 20), 2) * float3(.5, 5, .5 + localLattice.z / 10));  
+	dist -= length(noise3d3d(localLattice / 3 - nbig * 3) * 2 / max(0.1, big));  
 
 	return dist;
 }
@@ -49,8 +52,7 @@ float Map_Box(float3 position)
 [numthreads(1,1,1)]
 void AddSphere(uint3 id : SV_DispatchThreadID)
 {
-	uint i = id.x * yBound * zBound + id.y * zBound + id.z;
-	float3 p = weightBuffer[i].position;
+	float3 p = sdf_Position[id].xyz;
 	float d = Map_Sphere(p); 
 	float3 n = normalize(
 		v1 * Map_Sphere(p + v1 * e) +
@@ -58,15 +60,13 @@ void AddSphere(uint3 id : SV_DispatchThreadID)
 		v3 * Map_Sphere(p + v3 * e) +
 		v4 * Map_Sphere(p + v4 * e));
 
-	blendBuffer[i].distance = d;
-	blendBuffer[i].normal = n;
+	sdf_NormalDistance_Blend[id] = float4(n, d);
 }
 
 [numthreads(1,1,1)]
 void AddBox(uint3 id : SV_DispatchThreadID)
 {
-	uint i = id.x * yBound * zBound + id.y * zBound + id.z;
-	float3 p = weightBuffer[i].position;
+	float3 p = sdf_Position[id].xyz;
 	float d = Map_Box(p); 
 	float3 n = normalize(
 		v1 * Map_Box(p + v1 * e) +
@@ -74,15 +74,13 @@ void AddBox(uint3 id : SV_DispatchThreadID)
 		v3 * Map_Box(p + v3 * e) +
 		v4 * Map_Box(p + v4 * e));
 
-	blendBuffer[i].distance = d;
-	blendBuffer[i].normal = n;
+	sdf_NormalDistance_Blend[id] = float4(n, d);
 }
 
 [numthreads(1,1,1)]
 void AddPlane(uint3 id : SV_DispatchThreadID)
 {
-	uint i = id.x * yBound * zBound + id.y * zBound + id.z;
-	float3 p = weightBuffer[i].position;
+	float3 p = sdf_Position[id].xyz;
 	float d = Map_Terrain(p);
 	float3 n = normalize(
 		v1 * Map_Terrain(p + v1 * e) +
@@ -90,8 +88,6 @@ void AddPlane(uint3 id : SV_DispatchThreadID)
 		v3 * Map_Terrain(p + v3 * e) +
 		v4 * Map_Terrain(p + v4 * e));
 
-	blendBuffer[i].distance = d;
-	blendBuffer[i].normal = n;
-	
+	sdf_NormalDistance_Blend[id] = float4(n, d);
 }
 

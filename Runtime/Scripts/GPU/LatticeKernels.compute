@@ -8,22 +8,22 @@
 [numthreads(1,1,1)]
 void StandardLattice (uint3 id: SV_DispatchThreadID)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
-	float3 cellPosition = cellScale * id;
+	float3 p = cellScale * id;
 
-	weightBuffer[index].position = cellPosition;
-	weightBuffer[index].weight = 1;
+	sdf_Position[id] = float4(p, 1);
+	sdf_NormalDistance[id] = float4(1,1,1,1);
 }
 
 [numthreads(1,1,1)]  
 void WavyLattice (uint3 id: SV_DispatchThreadID)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
 	float3 chunkPosition = cellScale * id;
 	float3 worldPosition = transformPoint(chunkPosition, chunk2World);  
 	float3 masterPosition = transformPoint(worldPosition, world2Master);
+	float3 p = chunkPosition;
 
-	weightBuffer[index].position = chunkPosition;
-	weightBuffer[index].position += (noise3d3d(masterPosition / 10) - 0.5) * 8.5;
-	weightBuffer[index].weight = 1;
+	p += (noise3d3d(masterPosition / 10) - 0.5) * 8.5;;
+
+	sdf_Position[id] = float4(p, 1);
+	sdf_NormalDistance[id] = float4(1,1,1,1);
 }

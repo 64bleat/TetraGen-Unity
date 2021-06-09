@@ -130,17 +130,29 @@ void MarchingPentetra (uint3 id : SV_DispatchThreadID)
 	uint cellCountIndex = indexCellTri / 10;
 	uint3 mirror = id % 2;
 	uint cellFlip = mirror.x ^ mirror.y ^ mirror.z ^ bin(flipNormal);
-	Cell cube[] = {
-		weightBuffer[summate((id + (cubeMap[0] ^ mirror)) * weightIndexer)],
-		weightBuffer[summate((id + (cubeMap[1] ^ mirror)) * weightIndexer)],
-		weightBuffer[summate((id + (cubeMap[2] ^ mirror)) * weightIndexer)],
-		weightBuffer[summate((id + (cubeMap[3] ^ mirror)) * weightIndexer)],
-		weightBuffer[summate((id + (cubeMap[4] ^ mirror)) * weightIndexer)],
-		weightBuffer[summate((id + (cubeMap[5] ^ mirror)) * weightIndexer)],
-		weightBuffer[summate((id + (cubeMap[6] ^ mirror)) * weightIndexer)],
-		weightBuffer[summate((id + (cubeMap[7] ^ mirror)) * weightIndexer)]};
 
-	// Loop Variables
+	float4 cube_NormalDistance[] = {
+		sdf_NormalDistance[id + (cubeMap[0] ^ mirror)],
+		sdf_NormalDistance[id + (cubeMap[1] ^ mirror)],
+		sdf_NormalDistance[id + (cubeMap[2] ^ mirror)],
+		sdf_NormalDistance[id + (cubeMap[3] ^ mirror)],
+		sdf_NormalDistance[id + (cubeMap[4] ^ mirror)],
+		sdf_NormalDistance[id + (cubeMap[5] ^ mirror)],
+		sdf_NormalDistance[id + (cubeMap[6] ^ mirror)],
+		sdf_NormalDistance[id + (cubeMap[7] ^ mirror)]};
+
+	float3 cube_Position[] = {
+		sdf_Position[id + (cubeMap[0] ^ mirror)].xyz,
+		sdf_Position[id + (cubeMap[1] ^ mirror)].xyz,
+		sdf_Position[id + (cubeMap[2] ^ mirror)].xyz,
+		sdf_Position[id + (cubeMap[3] ^ mirror)].xyz,
+		sdf_Position[id + (cubeMap[4] ^ mirror)].xyz,
+		sdf_Position[id + (cubeMap[5] ^ mirror)].xyz,
+		sdf_Position[id + (cubeMap[6] ^ mirror)].xyz,
+		sdf_Position[id + (cubeMap[7] ^ mirror)].xyz
+	};
+
+	// Loop Variables 
 	uint4 cIndex;
 	Triangle temp;
 	float4x3 tVerts;
@@ -168,20 +180,20 @@ void MarchingPentetra (uint3 id : SV_DispatchThreadID)
 			tetraCubeMap[t][3]);
 
 		//	vertex positions for tetrahedron in local mesh space
-		tVerts[0] = cube[cIndex[0]].position;
-		tVerts[1] = cube[cIndex[1]].position;
-		tVerts[2] = cube[cIndex[2]].position;
-		tVerts[3] = cube[cIndex[3]].position;
+		tVerts[0] = cube_Position[cIndex[0]];
+		tVerts[1] = cube_Position[cIndex[1]];
+		tVerts[2] = cube_Position[cIndex[2]];
+		tVerts[3] = cube_Position[cIndex[3]];
 		// normals
-		tNorms[0] = cube[cIndex[0]].normal;
-		tNorms[1] = cube[cIndex[1]].normal;
-		tNorms[2] = cube[cIndex[2]].normal;
-		tNorms[3] = cube[cIndex[3]].normal;
+		tNorms[0] = cube_NormalDistance[cIndex[0]].xyz;
+		tNorms[1] = cube_NormalDistance[cIndex[1]].xyz;
+		tNorms[2] = cube_NormalDistance[cIndex[2]].xyz;
+		tNorms[3] = cube_NormalDistance[cIndex[3]].xyz;
 		//	vertex weights for tetrahedron
-		tSigns[0] = cube[cIndex[0]].signWeight; 
-		tSigns[1] = cube[cIndex[1]].signWeight;
-		tSigns[2] = cube[cIndex[2]].signWeight;
-		tSigns[3] = cube[cIndex[3]].signWeight;
+		tSigns[0] = bin(cube_NormalDistance[cIndex[0]].w); 
+		tSigns[1] = bin(cube_NormalDistance[cIndex[1]].w);
+		tSigns[2] = bin(cube_NormalDistance[cIndex[2]].w);
+		tSigns[3] = bin(cube_NormalDistance[cIndex[3]].w);
 		//	generate edge case ID
 		edgeCase = 
 			  (tSigns[0] ^ tSigns[1]) << 0
@@ -216,10 +228,10 @@ void MarchingPentetra (uint3 id : SV_DispatchThreadID)
 		edges[3] = edgeTetraMap[triTetraMap[edgeCase][3      ]];
 
 		//	switch to full weights from weight signs
-		tWeights.x = cube[tetraCubeMap[t][0]].weight;
-		tWeights.y = cube[tetraCubeMap[t][1]].weight;
-		tWeights.z = cube[tetraCubeMap[t][2]].weight;
-		tWeights.w = cube[tetraCubeMap[t][3]].weight;
+		tWeights.x = cube_NormalDistance[tetraCubeMap[t][0]].w;
+		tWeights.y = cube_NormalDistance[tetraCubeMap[t][1]].w;
+		tWeights.z = cube_NormalDistance[tetraCubeMap[t][2]].w;
+		tWeights.w = cube_NormalDistance[tetraCubeMap[t][3]].w;
 
 		// Lerp values
 		lt = float4(

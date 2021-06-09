@@ -10,14 +10,12 @@
 #include "Transform.cginc"
 #include "TetraGenInclude.cginc"
 
-float smooth(float d1, float d2, float k)
+float4 smooth(float4 d1, float4 d2, float k)
 {
-	if(k <= 0)
-		return min(d1, d2);
+	float t = step(d2.w, d1.w);
+	float h = max(k - abs(-d2.w + d1.w), 0) / k;
 
-	float h = max(k - abs(-d2 + d1), 0) / k;
-
-	return min(d1, d2) - pow(h, 3) * k / 6;
+	return lerp(d1, d2, t) - pow(h, 3) * k / 6;
 }
 
 float smoothUnion(float d1, float d2, float k)
@@ -32,74 +30,69 @@ float smoothUnion(float d1, float d2, float k)
 [numthreads(1,1,1)]
 void BlendUnion(uint3 id : SV_DispatchThreadID)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
-	float t = step(blendBuffer[index].distance, weightBuffer[index].weight);
+	float4 ndA = sdf_NormalDistance[id];
+	float4 ndB = sdf_NormalDistance_Blend[id];
+	float t = step(ndB.w, ndA.w);
 
-	weightBuffer[index].weight = lerp(weightBuffer[index].weight, blendBuffer[index].distance, t);
-	weightBuffer[index].normal = lerp(weightBuffer[index].normal, blendBuffer[index].normal, t);
-	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+	sdf_NormalDistance[id] = lerp(ndA, ndB, t);
 }
 
 [numthreads(1,1,1)]
 void BlendSubtraction(uint3 id : SV_DispatchThreadID)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
-	float t = step( weightBuffer[index].weight, -blendBuffer[index].distance);
+	float4 ndA = sdf_NormalDistance[id];
+	float4 ndB = sdf_NormalDistance_Blend[id];
+	float t = step(ndA.w, -ndB.w);
 
-	weightBuffer[index].weight =  lerp(weightBuffer[index].weight, -blendBuffer[index].distance, t);
-	weightBuffer[index].normal =  lerp(weightBuffer[index].normal, -blendBuffer[index].normal, t);
-	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+	sdf_NormalDistance[id] = lerp(ndA, -ndB, t);
 }
 
 [numthreads(1,1,1)]
 void BlendSmooth(uint3 id : SV_DispatchThreadID)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float4 ndA = sdf_NormalDistance[id];
+	float4 ndB = sdf_NormalDistance_Blend[id];
+	float t = shapeBuffer[0].blendFactor;
 
-	weightBuffer[index].weight = smooth(weightBuffer[index].weight, blendBuffer[index].distance, shapeBuffer[0].blendFactor);
-	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+	sdf_NormalDistance[id] = smooth(ndA, ndB, t);
 }
 
 [numthreads(1,1,1)]
 void BlendSmoothUnion(uint3 id : SV_DispatchThreadID)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float4 ndA = sdf_NormalDistance[id];
+	float4 ndB = sdf_NormalDistance_Blend[id];
+	float t = shapeBuffer[0].blendFactor;
 
-	weightBuffer[index].weight = smoothUnion(weightBuffer[index].weight, blendBuffer[index].distance, shapeBuffer[0].blendFactor);
-	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+	sdf_NormalDistance[id] = float4(1,1,1,smoothUnion(ndA.w, ndB.w, t));
 }
 
 [numthreads(1,1,1)]
 void BlendIntersection(uint3 id : SV_DispatchThreadID)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float4 ndA = sdf_NormalDistance[id];
+	float4 ndB = sdf_NormalDistance_Blend[id];
+	float t = step(ndA.w, ndB.w);
 
-	weightBuffer[index].weight = max(weightBuffer[index].weight, blendBuffer[index].distance);
-	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+	sdf_NormalDistance[id] = lerp(ndA, ndB, t);
 }
 
 [numthreads(1,1,1)]
 void BlendRepel(uint3 id : SV_DispatchThreadID)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float4 ndA = sdf_NormalDistance[id];
+	float4 ndB = sdf_NormalDistance_Blend[id];
+	float t =  shapeBuffer[0].blendFactor;
 
-	weightBuffer[index].weight = 2 * min(weightBuffer[index].weight, blendBuffer[index].distance) - smoothUnion(weightBuffer[index].weight, blendBuffer[index].distance, shapeBuffer[0].blendFactor);
-	weightBuffer[index].signWeight = bin(weightBuffer[index].weight);
+	sdf_NormalDistance[id] =  float4(1,1,1, 2 * min(ndA.w, ndB.w) - smoothUnion(ndA.w, ndB.w, t));
 }
 
 [numthreads(1,1,1)]
 void BlendLerp(uint3 id : SV_DispatchThreadID)
 {
-	uint index = id.x * yBound * zBound + id.y * zBound + id.z;
+	float4 ndA = sdf_NormalDistance[id];
+	float4 ndB = sdf_NormalDistance_Blend[id];
 	float t = shapeBuffer[0].blendFactor;
-	float da = weightBuffer[index].weight;
-	float db = blendBuffer[index].distance;
-	float3 na = weightBuffer[index].normal;
-	float3 nb = blendBuffer[index].normal;
-	Cell c = weightBuffer[index];
-	c.weight = lerp(da, db, t);
-	c.signWeight = bin(c.weight);
-	c.normal = lerp(na, nb, t);
 	
-	weightBuffer[index] = c;
+	sdf_NormalDistance[id] = lerp(ndA, ndB, t);
 }
